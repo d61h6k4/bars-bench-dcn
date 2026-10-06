@@ -88,9 +88,11 @@ preprocessing set and training are built. Each milestone ends with its verificat
   MLDCN layer), and other tricks found while reading. Decided (user): ablations run on a single seed,
   2022 (best validation AUC of the baseline 5 seeds: 0.813577, test 0.813972), and need no ONNX check;
   single-seed differences below ~0.0003 AUC are within seed noise.
-- [ ] **M9 Compare with ScalarLens:** arXiv 2609.29182 (numerical embeddings for CTR). Read the
-  paper first; then compare against our M5/M7 numerics (standardize / bucketize / PLE) under the
-  same protocol, if it can be exported to ONNX. "Beat the leaderboard" scope stays open.
+- [ ] **M9 Compare with ScalarLens:** arXiv 2609.29182 (numerical embeddings for CTR). Paper read
+  (see the 2026-10-06 log entry). Plan: (1) pure-torch `ScalarLens` module + unit tests, (2) wire into
+  `DCNv2` as an alternative numeric embedding fed with raw numerics + train ranges, (3) ONNX parity,
+  (4) one run on the ablation seed 2022 with the BARS recipe vs the log-squared bucket baseline.
+  "Beat the leaderboard" scope stays open.
 
 ## Next actions
 
@@ -101,7 +103,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
 ## Open questions
 
 - "Beat the leaderboard": DCNv2 row only, or best model per dataset?
-- ScalarLens (M9): does the paper report on BARS splits / ship code, and can its embedding be exported to ONNX? Not read yet.
+- ScalarLens (M9): paper read; no public code (only an unreferenced "artifact"), so we implement from the paper; the temperature tau and the norm epsilon are not specified (we assume tau=1, eps_n=1e-6).
 - Where does `avazu_x4` come from, and what are its reference MD5s?
 - Hyperparameter search budget; any GPU beyond local MPS?
 
@@ -360,3 +362,19 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `lrdrop4..7` duplicate epochs 1-4 (checkpoint/resume would avoid it).
 - 2026-10-06: M8 batch 1 reduced to seed 2022 only (4 jobs: LR drop after epoch 4/5/6/7); M7 batch 1 also on
   seed 2022. Pod restarted on the new queue.
+- 2026-10-06: ScalarLens paper read (arXiv 2609.29182, Yao et al.). Method: per numeric field, K=16
+  learned monotone intervals over the training range [l,u] (widths = softmax(w/tau) with floor eps=1e-4),
+  the value is clipped to [l,u] and linearly interpolated between two learned d=16 vectors of the
+  interval ends ("stable coordinate", depends on the scalar only). Context: the N numeric tokens and C
+  categorical embeddings are RMS-normalized (no affine); a per-field head gives drive delta_f and gate g_f
+  (m=8); a shared low-rank operator U (M x r), V (r x M), M = F*m, r=16, runs T=3 bounded steps
+  s <- (1-a_t) s + a_t tanh(delta + g * (sU)V), a_t = sigmoid(learned); the readout of field i is a SiLU
+  MLP (width 32) over [normalized coordinate, gate_i, s_i^(1..T)] times a positive learned gain, giving a
+  d=16 numeric token. Categorical embeddings go to the unchanged backbone. Everything is standard ops,
+  so ONNX export is plausible (interval lookup via comparisons, no searchsorted needed). Inputs are raw
+  numerics (no log / z-score), ranges stored with the model, inference clips to them.
+  Their evidence uses a different, weaker protocol (batch 4096, MLP 256-128-64, no BN/dropout, seeds
+  2026-2028): Criteo DCNv2 test AUC log-squared bucket 0.8112, PLE-A 0.8121, DEER 0.8122, ScalarLens 0.8133
+  (+0.0021 over log-squared bucket, +0.0011 over DEER; std <= 0.0002). The BARS recipe is already at
+  0.8136-0.8145 with bucketized numerics, so the gain may not transfer; the numeric path is only 13 of
+  39 fields. Their split sizes (36.67M / 4.58M / 4.58M) equal criteo_x4.
