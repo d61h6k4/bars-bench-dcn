@@ -22,8 +22,9 @@ class DCNv2(nn.Module):
 
     Inputs are integer indices (one column per categorical field, local to the field, i.e.
     ``0 <= x_cat[:, f] < cat_cardinalities[f]``) and an optional float block. All fields share
-    one embedding table; per-field offsets keep them apart. The output is the **logit**, shape
-    ``(batch,)``; apply a sigmoid for probabilities.
+    one embedding table; per-field offsets keep them apart. With ``shared_embedding`` there are
+    no offsets: every position indexes the same ``max(cat_cardinalities)``-row table (hashed ids).
+    The output is the **logit**, shape ``(batch,)``; apply a sigmoid for probabilities.
 
     ``structure``: ``crossnet_only`` (cross output feeds the final layer), ``stacked`` (cross
     output goes through the stacked MLP), ``parallel`` (cross and MLP outputs are concatenated)
@@ -47,16 +48,21 @@ class DCNv2(nn.Module):
         parallel_hidden_units: Sequence[int] | None = None,
         batch_norm: bool = False,
         dropout: float = 0.0,
+        shared_embedding: bool = False,
     ) -> None:
         super().__init__()
         if structure not in _STRUCTURES:
             msg = f"structure={structure!r} not supported, expected one of {_STRUCTURES}"
             raise ValueError(msg)
         self.num_features = num_features
-        self.embedding = nn.Embedding(sum(cat_cardinalities), embedding_dim)
-        self.register_buffer(
-            "offsets", torch.tensor([0, *accumulate(cat_cardinalities)][:-1]), persistent=False
-        )
+        if shared_embedding:
+            rows = max(cat_cardinalities)
+            offsets = [0] * len(cat_cardinalities)
+        else:
+            rows = sum(cat_cardinalities)
+            offsets = [0, *accumulate(cat_cardinalities)][:-1]
+        self.embedding = nn.Embedding(rows, embedding_dim)
+        self.register_buffer("offsets", torch.tensor(offsets), persistent=False)
         dim = len(cat_cardinalities) * embedding_dim + num_features
 
         if use_low_rank_mixture:

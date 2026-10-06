@@ -342,3 +342,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
   into `(batch,1)` float32 columns, bin values exactly equal to polars) and for estimators with a numeric
   block (graph inputs `x_cat` int64 + `x_num` float32, both with a dynamic batch). Pipeline parity
   on the criteo sample incl. missing numerics. Next: multihash (step 4).
+- 2026-10-06: M7 step 4 done: `MultiHashEncoder` (per column and hash random `(a, b)`, int64
+  `(a*i+b) mod M`, additive `{col}_h{k}` columns, ONNX Mul/Add/Mod), `DCNv2(shared_embedding=True)` /
+  `DCNClassifier(shared_embedding=True)` (one `max(card)`-row table, no offsets). ONNX parity on a
+  hashed pipeline. Next: step 5, bench config (`numeric = bucket|ple|both`, `categorical = ordinal|multihash`).

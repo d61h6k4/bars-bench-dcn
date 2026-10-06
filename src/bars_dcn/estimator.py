@@ -43,6 +43,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     passthrough columns; ``None`` uses every column. Field cardinalities are inferred at ``fit``
     as ``max index + 1``.
 
+    ``shared_embedding`` makes all positions share one embedding table (for ``MultiHashEncoder``
+    outputs, which live in one hash space) instead of one table slice per field.
+
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
     The numerics must be finite (impute first).
@@ -69,6 +72,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         cat_columns: Sequence[str] | None = None,
         num_columns: Sequence[str] | None = None,
         embedding_dim: int = 16,
+        shared_embedding: bool = False,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
         use_low_rank_mixture: bool = False,
@@ -96,6 +100,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.cat_columns = cat_columns
         self.num_columns = num_columns
         self.embedding_dim = embedding_dim
+        self.shared_embedding = shared_embedding
         self.structure = structure
         self.num_cross_layers = num_cross_layers
         self.use_low_rank_mixture = use_low_rank_mixture
@@ -212,6 +217,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             )
             self.feature_names_in_ = np.asarray(names, dtype=object)
         self.cardinalities_ = (index.max(axis=0) + 1).tolist()
+        if self.shared_embedding:  # every position indexes one table, as large as the widest field
+            self.cardinalities_ = [max(self.cardinalities_)] * len(self.cardinalities_)
         valid = None
         if eval_set is not None:
             valid = Block(
@@ -226,6 +233,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             self.cardinalities_,
             num_features=self.n_numeric_in_,
             embedding_dim=self.embedding_dim,
+            shared_embedding=self.shared_embedding,
             structure=self.structure,
             num_cross_layers=self.num_cross_layers,
             use_low_rank_mixture=self.use_low_rank_mixture,

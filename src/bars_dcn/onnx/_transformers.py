@@ -18,8 +18,10 @@ from bars_dcn.preprocessing import (
     OOV_INDEX,
     AvazuTimeFeatures,
     LogSquaredBucketizer,
+    MultiHashEncoder,
     OrdinalEncoder,
     PiecewiseLinearEncoder,
+    hash_name,
     ple_name,
 )
 
@@ -127,6 +129,23 @@ def _emit_ple(graph: Builder, frame: Frame, step: PiecewiseLinearEncoder) -> Fra
     return out
 
 
+def _hash_outputs(step: MultiHashEncoder) -> dict[str, DType]:
+    return {hash_name(column, k): "int64" for column in step.columns_ for k in range(step.n_hashes)}
+
+
+def _emit_multihash(graph: Builder, frame: Frame, step: MultiHashEncoder) -> Frame:
+    """Compute ``(a * index + b) mod cardinality`` in int64, one ``(a, b)`` per column and hash."""
+    modulus = graph.constant(step.cardinality, np.int64)
+    out: Frame = {}
+    for i, column in enumerate(step.columns_):
+        index = _need(frame, column, "int64", "MultiHashEncoder")
+        for k in range(step.n_hashes):
+            product = graph.op("Mul", [index, graph.constant(step.multipliers_[i, k], np.int64)])
+            shifted = graph.op("Add", [product, graph.constant(step.offsets_[i, k], np.int64)])
+            out[hash_name(column, k)] = Column(graph.op("Mod", [shifted, modulus]), "int64")
+    return out
+
+
 def _avazu_outputs(step: AvazuTimeFeatures) -> dict[str, DType]:
     return {step.column: "string", "weekday": "string", "weekend": "string"}
 
@@ -192,6 +211,7 @@ SPECS: dict[type, Spec] = {
         "BarsDcnLogSquaredBucketizer", _bucketizer_outputs, _emit_bucketizer
     ),
     OrdinalEncoder: Spec("BarsDcnOrdinalEncoder", _ordinal_outputs, _emit_ordinal),
+    MultiHashEncoder: Spec("BarsDcnMultiHashEncoder", _hash_outputs, _emit_multihash),
     PiecewiseLinearEncoder: Spec("BarsDcnPiecewiseLinearEncoder", _ple_outputs, _emit_ple),
     AvazuTimeFeatures: Spec("BarsDcnAvazuTimeFeatures", _avazu_outputs, _emit_avazu_time),
 }

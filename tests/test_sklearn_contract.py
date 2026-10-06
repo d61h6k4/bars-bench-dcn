@@ -27,6 +27,7 @@ from bars_dcn.estimator import DCNClassifier
 from bars_dcn.preprocessing import (
     AvazuTimeFeatures,
     LogSquaredBucketizer,
+    MultiHashEncoder,
     OrdinalEncoder,
     PiecewiseLinearEncoder,
 )
@@ -75,6 +76,12 @@ CASES = [
         "LogSquaredBucketizer",
         LogSquaredBucketizer,
         _numbers,
+        lambda est, x: est.transform(x).to_dict(as_series=False),
+    ),
+    Case(
+        "MultiHashEncoder",
+        lambda: MultiHashEncoder(n_hashes=2, cardinality=7),
+        lambda: (pl.DataFrame({"a": [0, 1, 2, 3, 4], "b": [4, 3, 2, 1, 0]}), None),
         lambda est, x: est.transform(x).to_dict(as_series=False),
     ),
     Case(
