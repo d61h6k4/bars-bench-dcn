@@ -291,4 +291,17 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `AvazuTimeFeatures`, dataset registry (`bars_dcn.bench.data`), `configs/avazu_x4_dcnv2.toml`,
   `scripts/make_sample.py --dataset avazu_x4` and an avazu e2e runner test. RunPod access
   exists (MCP tools); the remaining criteo seeds run there (see below).
+- 2026-10-06: Training batches now come from a torch DataLoader (`bars_dcn.batches`) with Accelerate
+  placing them on the device; `num_workers`/`prefetch_factor` exposed. Same shuffle as before
+  (verified equal to the old randperm sequence, with 0 and 2 workers); results independent of
+  `num_workers` (a multi-process loader draws a base seed from the global RNG and shifted the dropout
+  masks until the loader got its own generator). Measured, 36.7M x 39 int32: gather 1.8 ms/batch
+  with a torch tensor index in-process, vs 16.5 ms with the old numpy fancy index; workers add IPC
+  overhead (2-3 ms/batch at 10M rows), so they do not help here and stay at 0 by default. On MPS the
+  step is compute bound (~140-260 ms), so the loader never mattered much there. Not yet measured on
+  CUDA. Correction: an earlier "GPU 46% => loader bound" reading from the RunPod pod was taken while
+  the pod was still unzipping data and meant nothing.
+- 2026-10-06: RunPod lessons: pin allowedCudaVersions (torch 2.14 ships CUDA 13 libs; a CUDA 12.8
+  host fails with "driver too old"), make the start script fail-fast and non-restarting, and note
+  that PyPI download speed varies hugely by host (18m41s vs 40s for the same 75 packages).
 

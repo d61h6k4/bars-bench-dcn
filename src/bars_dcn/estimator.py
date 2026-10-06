@@ -45,7 +45,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     rate on plateaus, stops early and restores the best epoch. Without ``eval_set`` it trains
     exactly ``max_epochs`` at a fixed rate. ``device="auto"`` lets accelerate pick cuda / mps /
     cpu for training; prediction always runs on the CPU. ``history_`` has one dict per epoch.
-    ``log_dir`` writes TensorBoard epoch metrics and signal-propagation plots there.
+    ``num_workers`` / ``prefetch_factor`` configure the training ``DataLoader`` (gather ahead of the
+    step); the row order does not depend on them. ``log_dir`` writes TensorBoard epoch metrics and
+    signal-propagation plots there.
     """
 
     def __init__(
@@ -71,6 +73,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         lr_reduce_factor: float = 0.1,
         min_lr: float = 1e-6,
         device: str = "auto",
+        num_workers: int = 0,
+        prefetch_factor: int = 2,
         log_dir: str | None = None,
         random_state: int | None = None,
     ) -> None:
@@ -94,6 +98,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.lr_reduce_factor = lr_reduce_factor
         self.min_lr = min_lr
         self.device = device
+        self.num_workers = num_workers
+        self.prefetch_factor = prefetch_factor
         self.log_dir = log_dir
         self.random_state = random_state
 
@@ -184,6 +190,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             lr_reduce_factor=self.lr_reduce_factor,
             min_lr=self.min_lr,
             device=self.device,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
             log_dir=self.log_dir,
             seed=self.random_state,
         )

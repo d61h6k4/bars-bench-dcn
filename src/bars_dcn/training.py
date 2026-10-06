@@ -18,9 +18,11 @@ from accelerate.state import AcceleratorState
 from sklearn.metrics import log_loss, roc_auc_score
 from torch.nn import functional
 
+from bars_dcn.batches import make_loader
 from bars_dcn.diagnostics import probe
 
 if TYPE_CHECKING:
+    from torch.utils.data import DataLoader
     from torch.utils.tensorboard import SummaryWriter
 
     from bars_dcn.model import DCNv2
@@ -45,6 +47,8 @@ class TrainSettings:
     min_lr: float = 1e-6
     min_delta: float = 1e-6
     device: str = "auto"
+    num_workers: int = 0  # DataLoader worker processes gathering batches ahead of the step
+    prefetch_factor: int = 2  # batches each worker keeps ready (only with num_workers > 0)
     log_dir: str | None = None
     seed: int | None = None
 
@@ -104,6 +108,7 @@ def make_accelerator(device: str) -> Accelerator:
         raise ValueError(msg)
     AcceleratorState._reset_state(reset_partial_state=True)  # noqa: SLF001
     accelerator = Accelerator(cpu=device == "cpu")
+    accelerator.dataloader_config.non_blocking = accelerator.device.type == "cuda"
     if device == "mps" and accelerator.device.type != "mps":
         msg = f"device='mps' requested but accelerate selected {accelerator.device}"
         raise RuntimeError(msg)
@@ -128,24 +133,15 @@ def _run_epoch(
     model: DCNv2,
     optimizer: torch.optim.Optimizer,
     accelerator: Accelerator,
-    index: np.ndarray,
-    target: np.ndarray,
+    loader: DataLoader,
     settings: TrainSettings,
-    generator: torch.Generator,
 ) -> float:
-    """One shuffled pass over the data; returns the mean batch loss (BCE + penalty)."""
-    device = accelerator.device
+    """One pass over the (already shuffled and device-placed) batches; returns the mean loss."""
     model.train()
-    order = torch.randperm(len(index), generator=generator).numpy()
-    total, steps = torch.zeros((), device=device), 0
-    for start in range(0, len(index), settings.batch_size):
-        rows = order[start : start + settings.batch_size]
-        if len(rows) < 2:  # noqa: PLR2004 - BatchNorm cannot train on a single row
-            continue
-        batch = torch.from_numpy(index[rows]).long().to(device)
-        labels = torch.from_numpy(target[rows]).to(device)
+    total, steps = torch.zeros((), device=accelerator.device), 0
+    for index, labels in loader:
         optimizer.zero_grad(set_to_none=True)
-        loss = functional.binary_cross_entropy_with_logits(model(batch), labels)
+        loss = functional.binary_cross_entropy_with_logits(model(index.long()), labels)
         if settings.embedding_regularizer:
             loss = loss + embedding_penalty(model, settings.embedding_regularizer)
         accelerator.backward(loss)
@@ -223,10 +219,19 @@ def fit_network(
     """
     accelerator = make_accelerator(settings.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=settings.learning_rate)
-    model, optimizer = accelerator.prepare(model, optimizer)
     generator = torch.Generator()
     if settings.seed is not None:
         generator.manual_seed(settings.seed)
+    loader = make_loader(
+        index,
+        target,
+        settings.batch_size,
+        generator,
+        num_workers=settings.num_workers,
+        prefetch_factor=settings.prefetch_factor,
+        pin_memory=accelerator.device.type == "cuda",
+    )
+    model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
     stopper = PlateauStopper(
         settings.patience, settings.lr_reduce_factor, settings.min_lr, settings.min_delta
     )
@@ -240,7 +245,7 @@ def fit_network(
     best_state, best_epoch = None, None
     lr = settings.learning_rate
     for epoch in range(1, settings.max_epochs + 1):
-        loss = _run_epoch(model, optimizer, accelerator, index, target, settings, generator)
+        loss = _run_epoch(model, optimizer, accelerator, loader, settings)
         record = {"epoch": float(epoch), "lr": lr, "train_loss": loss}
         stop = False
         if valid is not None:

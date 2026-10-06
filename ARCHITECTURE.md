@@ -138,7 +138,11 @@ AUC in float64, then `PlateauStopper`: a non-improving epoch (AUC < best + 1e-6)
 LR by 0.1 (floor 1e-6) and counts towards patience 2; an improvement resets the count but not
 the LR. The best epoch's weights are restored at the end. Without `eval_set` it trains exactly
 `max_epochs` at a fixed LR. A trailing single-row batch is skipped (BatchNorm cannot train on it).
-Batches are sliced from in-memory index arrays and moved to the device manually.
+Batches come from a `torch.utils.data.DataLoader` (`bars_dcn.batches`): a seeded batch sampler
+owns the shuffle (`torch.randperm` in the main process, so the row order never depends on
+`num_workers`), the dataset gathers a whole batch with one tensor index, and `Accelerator.prepare`
+places batches on the device (non-blocking from pinned memory on CUDA). `num_workers` /
+`prefetch_factor` are parameters; the default 0 is right for these shapes (see PROGRESS.md).
 `device="auto"` uses accelerate (MPS here); the fitted model always ends on CPU.
 CPU runs are reproducible for a seed; MPS runs are not bit-reproducible.
 
