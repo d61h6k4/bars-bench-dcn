@@ -1,0 +1,6 @@
+# M7 (PLE, multihash) then M9 (ScalarLens), criteo_x4, ablation seed 2022, plateau LR rule (baseline: valid 0.813577, test 0.813972, LogLoss 0.438288).
+# One job at a time per pod (the criteo jobs are CPU-bound).
+configs/criteo_x4_dcnv2.toml --name ple16 --seeds 2022 --set preprocessing.numeric="ple" --set preprocessing.ple_bins=16
+configs/criteo_x4_dcnv2.toml --name both16 --seeds 2022 --set preprocessing.numeric="both" --set preprocessing.ple_bins=16
+configs/criteo_x4_dcnv2.toml --name multihash1m --seeds 2022 --set preprocessing.categorical="multihash" --set preprocessing.multihash_n_hashes=2 --set preprocessing.multihash_cardinality=1000000 --set model.embedding_dim=8
+configs/criteo_x4_dcnv2.toml --name scalarlens --seeds 2022 --set preprocessing.numeric="scalarlens"

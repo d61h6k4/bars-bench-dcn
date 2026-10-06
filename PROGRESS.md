@@ -393,3 +393,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - 2026-10-06: M8 batch 1, `lrdrop5` (seed 2022, LR x0.1 after epoch 5): valid 0.814472, test 0.814787, test LogLoss
   0.437420, best epoch 7 of 9. `lrdrop4` 0.814925 vs `lrdrop5` 0.814787: earlier drop slightly better,
   within single-seed noise. `lrdrop6` at epoch 8: valid 0.814024 (drop after epoch 6, best so far 0.814123).
+- 2026-10-06: Plan agreed with the user: run M7 and M9 first (`experiments/m7_m9.txt`: ple16, both16, multihash1m,
+  scalarlens; seed 2022, plateau LR rule, sequential), then the 5-seed protocol with the best combination
+  (including the best fixed LR drop). PLE fit on the full train split: 31 s, 128 bin columns in total
+  (low-cardinality fields get fewer bins), i.e. ~19 GB float32 numeric block.
