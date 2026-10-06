@@ -351,3 +351,8 @@ preprocessing set and training are built. Each milestone ends with its verificat
   criteo; `DCNClassifier(num_columns=...)` may be a function of the frame's column names
   (`ple_columns`). First batch: `experiments/m7_ple_multihash.txt` (seed 2021), to run on the pod after
   M8 batch 1. Note multihash with `embedding_dim=8` x 2 hashes keeps 16 dims per field.
+- 2026-10-06: Parallel jobs on one RTX 4090 pod (12 vCPU) are slower than sequential: 4 jobs took 24.5 min
+  for epoch 1 each (~6 min of pod time per job-epoch) vs ~2 min for a single job (CPU-bound: pod CPU 99%,
+  GPU 50%). Restarted M8 batch 1 with PARALLEL=1. Rule: one criteo job at a time per pod unless the
+  host has many more vCPUs. Also: variants that share a seed are identical until the first LR drop, so
+  `lrdrop4..7` duplicate epochs 1-4 (checkpoint/resume would avoid it).
