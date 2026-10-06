@@ -74,6 +74,20 @@ class ScalarLens(nn.Module):
         self.low.copy_(low)
         self.high.copy_(torch.where(high > low, high, low + 1))
 
+    def init_boundaries(self, edges: Tensor) -> None:
+        """Start the (still learnable) boundaries at ``edges``, an ``(N, K + 1)`` quantile grid.
+
+        Equal widths over the raw range put almost every row of a heavy-tailed field in the
+        first interval; quantile edges spread the rows over all intervals from the start.
+        ``set_ranges`` must have been called first.
+        """
+        span = (self.high - self.low).unsqueeze(-1)
+        fractions = edges.diff(dim=-1).to(span.dtype) / span
+        k = self.intervals
+        softmax = (fractions * (1 + k * self.min_width) - self.min_width).clamp_min(1e-6)
+        with torch.no_grad():
+            self.width_logits.copy_(self.temperature * softmax.log())
+
     def boundaries(self) -> Tensor:
         """Return the ``(N, K + 1)`` interval boundaries: strictly increasing from low to high."""
         weights = torch.softmax(self.width_logits / self.temperature, dim=-1)

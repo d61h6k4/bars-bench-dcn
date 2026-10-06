@@ -12,6 +12,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from bars_dcn.model import DCNv2
 from bars_dcn.model.dcn import Structure
+from bars_dcn.model.scalarlens import ScalarLens
 from bars_dcn.training import PREDICT_CHUNK, Block, TrainSettings, fit_network, predict_logits
 
 Frame = pl.DataFrame | pl.LazyFrame | np.ndarray
@@ -47,7 +48,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     outputs, which live in one hash space) instead of one table slice per field.
 
     ``scalarlens`` embeds the numeric block with a ScalarLens (raw numerics in, one token per
-    field; training ranges are recorded at ``fit``).
+    field; training ranges are recorded at ``fit``). ``scalarlens_init`` is ``"uniform"`` (equal
+    interval widths over the range, the paper's) or ``"quantile"`` (boundaries start at the training
+    quantiles).
 
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
@@ -78,6 +81,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         embedding_dim: int = 16,
         shared_embedding: bool = False,
         scalarlens: bool = False,
+        scalarlens_init: str = "uniform",
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
         use_low_rank_mixture: bool = False,
@@ -107,6 +111,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.embedding_dim = embedding_dim
         self.shared_embedding = shared_embedding
         self.scalarlens = scalarlens
+        self.scalarlens_init = scalarlens_init
         self.structure = structure
         self.num_cross_layers = num_cross_layers
         self.use_low_rank_mixture = use_low_rank_mixture
@@ -207,6 +212,18 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(msg)
         return (values == self.classes_[1]).astype(np.float32)
 
+    def _init_scalarlens(self, lens: ScalarLens, numeric: np.ndarray) -> None:
+        if self.scalarlens_init not in ("uniform", "quantile"):
+            msg = f"scalarlens_init must be 'uniform' or 'quantile', got {self.scalarlens_init!r}"
+            raise ValueError(msg)
+        lens.set_ranges(
+            torch.from_numpy(numeric.min(axis=0)), torch.from_numpy(numeric.max(axis=0))
+        )
+        if self.scalarlens_init == "quantile":
+            levels = np.linspace(0, 1, lens.intervals + 1)
+            edges = np.quantile(numeric, levels, axis=0).T  # (N, K + 1)
+            lens.init_boundaries(torch.from_numpy(edges.astype(np.float32)))
+
     def fit(self, X: Frame, y: object, eval_set: tuple[Frame, object] | None = None) -> Self:
         if self.num_columns is not None and self.cat_columns is None:
             msg = "num_columns needs explicit cat_columns (the frame also holds the raw numerics)"
@@ -263,9 +280,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             dropout=self.dropout,
         )
         if model.numeric_embedding is not None:
-            model.numeric_embedding.set_ranges(
-                torch.from_numpy(numeric.min(axis=0)), torch.from_numpy(numeric.max(axis=0))
-            )
+            self._init_scalarlens(model.numeric_embedding, numeric)
         settings = TrainSettings(
             learning_rate=self.learning_rate,
             batch_size=self.batch_size,

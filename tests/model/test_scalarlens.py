@@ -111,6 +111,18 @@ def test_boundaries_that_collapse_in_float32_give_finite_outputs_and_gradients()
     assert all(torch.isfinite(p.grad).all() for p in module.parameters() if p.grad is not None)
 
 
+def test_quantile_init_puts_the_boundaries_at_the_quantiles_and_spreads_the_rows():
+    module = ScalarLens(1, C, D, intervals=4)
+    values = torch.cat([torch.rand(900), 1000 * torch.rand(100)])  # heavy tail
+    module.set_ranges(values.min().unsqueeze(0), values.max().unsqueeze(0))
+    edges = torch.quantile(values, torch.linspace(0, 1, 5)).unsqueeze(0)
+    module.init_boundaries(edges)
+    torch.testing.assert_close(module.boundaries(), edges, rtol=1e-2, atol=1e-2)
+    inside = (values.unsqueeze(-1) >= module.boundaries()[0, 1:-1]).sum(-1)
+    counts = torch.bincount(inside, minlength=4)
+    assert counts.min() > 0.15 * len(values)  # equal widths would leave ~99% in interval 0
+
+
 def test_degenerate_interval_count_is_rejected():
     with pytest.raises(ValueError, match="intervals"):
         ScalarLens(N, C, D, intervals=0)

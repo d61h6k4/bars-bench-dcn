@@ -118,7 +118,11 @@ def _criteo_steps(settings: dict, model_params: dict, min_count: int) -> tuple[l
         model_params["num_columns"] = ple_columns
     if numeric == "scalarlens":
         steps.append(("fill", MissingFiller(columns=NUMERIC, fill_value=0)))
-        model_params |= {"num_columns": NUMERIC, "scalarlens": True}
+        model_params |= {
+            "num_columns": NUMERIC,
+            "scalarlens": True,
+            "scalarlens_init": settings.get("scalarlens_init", "uniform"),
+        }
     if numeric in ("bucket", "both"):
         steps += [
             ("bucket", LogSquaredBucketizer(columns=NUMERIC)),

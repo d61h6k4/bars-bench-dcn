@@ -397,3 +397,13 @@ preprocessing set and training are built. Each milestone ends with its verificat
   scalarlens; seed 2022, plateau LR rule, sequential), then the 5-seed protocol with the best combination
   (including the best fixed LR drop). PLE fit on the full train split: 31 s, 128 bin columns in total
   (low-cardinality fields get fewer bins), i.e. ~19 GB float32 numeric block.
+- 2026-10-06: scikit-rank review for M7/M9: its "PLE" is a per-feature learned embedding of the bins (Linear +
+  ReLU + feature dropout 0.1, 32 bins; criteo_x1 test AUC 0.8138 -> 0.8146, 5 seeds), not raw bins. Decided
+  (user): our `ple` = classic untrained PLE (raw bins as numeric block); the trained version is covered by
+  ScalarLens (interpolation between learned knot vectors == PLE + linear, plus learned boundaries).
+  Found: on criteo_x4 train, with equal-width initial intervals over the raw range, >99.9% of the rows of 11 of
+  13 numeric fields fall in interval 0 (I10: 71%), so the paper-faithful init starts with a near-constant
+  coordinate. Added `scalarlens_init = "quantile"` (boundaries start at training quantiles, still learnable)
+  next to the paper's "uniform"; the queue `experiments/m7_m9.txt` now runs both (scalarlens_q, scalarlens),
+  then multihash1m, ple16, both16. Gated/inner cross and top-k MoE: deprioritized (see M8); DCN-Mix first as a
+  signal for the cross-layer family.

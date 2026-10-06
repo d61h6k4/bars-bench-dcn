@@ -155,3 +155,12 @@ def test_non_finite_numerics_are_rejected(data):
     )
     with pytest.raises(ValueError, match="finite"):
         _model(cat_columns=["a", "b", "c"], num_columns=["n0"]).fit(frame, y)
+
+
+def test_scalarlens_init_is_validated_and_quantile_init_trains(data):
+    frame, y = _frame_with_numeric(data)
+    kwargs = {"cat_columns": ["a", "b", "c"], "num_columns": ["n0", "n1"], "scalarlens": True}
+    fitted = _model(scalarlens_init="quantile", **kwargs).fit(frame, y)
+    assert fitted.model_.numeric_embedding is not None
+    with pytest.raises(ValueError, match="scalarlens_init"):
+        _model(scalarlens_init="nope", **kwargs).fit(frame, y)
