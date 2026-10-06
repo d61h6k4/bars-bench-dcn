@@ -438,3 +438,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (whole numeric tokens dropped while training). Queue `experiments/m9_scalarlens_reg.txt`: `scalarlens_q_l2` (1e-4) and
   `scalarlens_q_drop` (0.1), seed 2022, plateau rule, to run on the same pod right after the M7+M9 queue (~22:35 UTC), then
   record the results and DELETE the pod (deadline 02:30 UTC).
+- 2026-10-06: M7 results (seed 2022, plateau LR rule; baseline valid 0.813577 / test 0.813972 / LL 0.438288, 20,381,953 params):
+  * `multihash1m` (2 hashes into a 1M-row shared table, dim 8 per hash): valid 0.813212, test 0.813709, LL 0.438556, best
+    epoch 8 of 10, 13,810,625 params (-32%): -0.00026 test AUC, +0.00027 LogLoss for a third fewer parameters.
+  * `ple16` (classic untrained PLE: 16 quantile bins per numeric field as a raw float block, 128 columns, next to the
+    categorical embeddings; the 13 numerics are NOT bucketized): valid 0.814364, test 0.814703, LL 0.437709, best epoch 9
+    of 11, 20,005,185 params: +0.00073 test AUC, -0.00058 LogLoss vs baseline; vs BARS (0.814514 / 0.437631):
+    +0.00019 AUC, +0.00008 LogLoss. The plateau rule dropped the LR after epoch 8 (baseline: after 7), so drop timing
+    is not the same, but a later drop did not hurt. Single seed; untested with the epoch-4 fixed drop.
+  * `both16` (PLE bins + bucketized embeddings): running; epoch 6 (first epoch at LR 1e-4) val AUC 0.814708.
