@@ -456,3 +456,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   Queue 1 summary, test AUC / LL (baseline 0.813972 / 0.438288): scalarlens_q 0.813533 / 0.439017, scalarlens 0.813898 /
   0.438118, multihash1m 0.813709 / 0.438556 (-32% params), ple16 0.814703 / 0.437709, both16 0.814994 / 0.437286.
   Pod idle 22:10-22:27 UTC before queue 2 (regularized ScalarLens) was launched.
+- 2026-10-06: M9 `scalarlens_q_l2` (ScalarLens, quantile-initialized boundaries, L2 1e-4 on the ScalarLens parameters except the
+  boundary logits; seed 2022; plateau LR rule; no fixed LR drop): valid 0.815155, test 0.815478, test LogLoss 0.436839, best
+  epoch 9 of 11 (the plateau rule dropped the LR after epoch 8), 20,417,425 params. vs `scalarlens_q` without the regularizer
+  (0.813257 / 0.813533 / 0.439017): +0.00195 test AUC, -0.00218 LogLoss, i.e. the L2 penalty removed the overfitting; vs baseline
+  (0.813972 / 0.438288): +0.00151 AUC, -0.00145 LogLoss; vs BARS (0.814514 / 0.437631): +0.00096 AUC, -0.00079 LogLoss; vs `both16`
+  (0.814994 / 0.437286): +0.00048 / -0.00045; best valid and test numbers of the session so far. The value 1e-4 was one a-priori
+  choice (not tuned), seed 2022 is the baseline's best-validation seed (a tough seed for the comparison, but still one seed);
+  plateau-rule LR timing noise ~0.001. Untested: with the fixed epoch-4 LR drop, with PLE bins, other seeds. `scalarlens_q_drop`
+  (token dropout 0.1) started 23:15 UTC.
