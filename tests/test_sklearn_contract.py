@@ -24,7 +24,12 @@ from sklearn.utils.validation import check_is_fitted
 
 import bars_dcn
 from bars_dcn.estimator import DCNClassifier
-from bars_dcn.preprocessing import AvazuTimeFeatures, LogSquaredBucketizer, OrdinalEncoder
+from bars_dcn.preprocessing import (
+    AvazuTimeFeatures,
+    LogSquaredBucketizer,
+    OrdinalEncoder,
+    PiecewiseLinearEncoder,
+)
 
 
 @dataclass
@@ -69,6 +74,12 @@ CASES = [
     Case(
         "LogSquaredBucketizer",
         LogSquaredBucketizer,
+        _numbers,
+        lambda est, x: est.transform(x).to_dict(as_series=False),
+    ),
+    Case(
+        "PiecewiseLinearEncoder",
+        lambda: PiecewiseLinearEncoder(n_bins=3),
         _numbers,
         lambda est, x: est.transform(x).to_dict(as_series=False),
     ),

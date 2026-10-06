@@ -335,3 +335,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - 2026-10-06: criteo seeds 2021-2023 finished on the RunPod 4090 (~21 min fit each, plus ~5 min CPU
   test prediction). The same pod was re-pointed (update-pod + restart) at the M8 batch 1 queue,
   PARALLEL=4.
+- 2026-10-06: M7 step 1 (float numeric block: `DCNClassifier(num_columns=...)`, batches/training carry
+  a numeric tensor) and step 2 (`PiecewiseLinearEncoder`: quantile edges, de-duplicated, additive
+  `{col}_ple{k}` float32 columns, missing filled before encoding) done; ONNX for both is step 3.
