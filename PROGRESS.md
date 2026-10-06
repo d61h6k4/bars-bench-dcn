@@ -447,3 +447,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
     +0.00019 AUC, +0.00008 LogLoss. The plateau rule dropped the LR after epoch 8 (baseline: after 7), so drop timing
     is not the same, but a later drop did not hurt. Single seed; untested with the epoch-4 fixed drop.
   * `both16` (PLE bins + bucketized embeddings): running; epoch 6 (first epoch at LR 1e-4) val AUC 0.814708.
+- 2026-10-06: M7 `both16` (PLE bins next to the bucketized embeddings; seed 2022; plateau LR rule; queue 1 finished 22:10 UTC, all 5
+  jobs exit 0): valid 0.814708, test 0.814994, LL 0.437286, best epoch 6 of 8, 21,038,849 params. vs baseline (0.813972 /
+  0.438288): +0.00102 test AUC, -0.00100 LogLoss; vs `ple16` (0.814703 / 0.437709): +0.00029 / -0.00042; vs BARS
+  (0.814514 / 0.437631): +0.00048 test AUC and -0.00035 LogLoss, i.e. above BARS on both test metrics for this seed.
+  The plateau rule dropped the LR after epoch 5. Single seed (2022, the best baseline seed by validation), LR-drop timing
+  noise ~0.001: not a leaderboard claim; untested with the fixed epoch-4 drop (lrdrop4 alone: 0.814925 / 0.437186).
+  Queue 1 summary, test AUC / LL (baseline 0.813972 / 0.438288): scalarlens_q 0.813533 / 0.439017, scalarlens 0.813898 /
+  0.438118, multihash1m 0.813709 / 0.438556 (-32% params), ple16 0.814703 / 0.437709, both16 0.814994 / 0.437286.
+  Pod idle 22:10-22:27 UTC before queue 2 (regularized ScalarLens) was launched.
