@@ -390,3 +390,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
   Single seed, drop epoch chosen on validation: promising, not yet a leaderboard claim (needs the
   5-seed protocol with the chosen schedule). Epoch time alone on the 4090: ~2 min; fit 17 min + 5 min
   test prediction. lrdrop5-7 running.
+- 2026-10-06: M8 batch 1, `lrdrop5` (seed 2022, LR x0.1 after epoch 5): valid 0.814472, test 0.814787, test LogLoss
+  0.437420, best epoch 7 of 9. `lrdrop4` 0.814925 vs `lrdrop5` 0.814787: earlier drop slightly better,
+  within single-seed noise. `lrdrop6` at epoch 8: valid 0.814024 (drop after epoch 6, best so far 0.814123).
