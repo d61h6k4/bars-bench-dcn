@@ -18,6 +18,7 @@ from bars_dcn.preprocessing import (
     OOV_INDEX,
     AvazuTimeFeatures,
     LogSquaredBucketizer,
+    MissingFiller,
     MultiHashEncoder,
     OrdinalEncoder,
     PiecewiseLinearEncoder,
@@ -94,6 +95,21 @@ def _emit_ordinal(graph: Builder, frame: Frame, step: OrdinalEncoder) -> Frame:
             default_int64=OOV_INDEX,
         )
         out[column] = Column(index, "int64")
+    return out
+
+
+def _filler_outputs(step: MissingFiller) -> dict[str, DType]:
+    return dict.fromkeys(step.columns_, "double")
+
+
+def _emit_filler(graph: Builder, frame: Frame, step: MissingFiller) -> Frame:
+    """Replace NaN (the serving form of a missing value) by ``fill_value``."""
+    fill = graph.constant(step.fill_value, np.float64)
+    out: Frame = {}
+    for column in step.columns_:
+        value = _need(frame, column, "double", "MissingFiller")
+        filled = graph.op("Where", [graph.op("IsNaN", [value]), fill, value])
+        out[column] = Column(filled, "double")
     return out
 
 
@@ -211,6 +227,7 @@ SPECS: dict[type, Spec] = {
         "BarsDcnLogSquaredBucketizer", _bucketizer_outputs, _emit_bucketizer
     ),
     OrdinalEncoder: Spec("BarsDcnOrdinalEncoder", _ordinal_outputs, _emit_ordinal),
+    MissingFiller: Spec("BarsDcnMissingFiller", _filler_outputs, _emit_filler),
     MultiHashEncoder: Spec("BarsDcnMultiHashEncoder", _hash_outputs, _emit_multihash),
     PiecewiseLinearEncoder: Spec("BarsDcnPiecewiseLinearEncoder", _ple_outputs, _emit_ple),
     AvazuTimeFeatures: Spec("BarsDcnAvazuTimeFeatures", _avazu_outputs, _emit_avazu_time),

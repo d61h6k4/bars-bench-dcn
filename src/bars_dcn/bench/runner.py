@@ -25,6 +25,7 @@ from bars_dcn.pipeline import fit_pipeline
 from bars_dcn.preprocessing import (
     AvazuTimeFeatures,
     LogSquaredBucketizer,
+    MissingFiller,
     MultiHashEncoder,
     OrdinalEncoder,
     PiecewiseLinearEncoder,
@@ -103,17 +104,21 @@ def _criteo_steps(settings: dict, model_params: dict, min_count: int) -> tuple[l
     """Criteo preprocessing steps and the encoded index fields they produce.
 
     ``numeric``: ``bucket`` (BARS: log-squared buckets as embedded ids), ``ple`` (float
-    piecewise-linear bins as the numeric block) or ``both``.
+    piecewise-linear bins as the numeric block), ``both``, or ``scalarlens`` (raw numerics, missing
+    filled with 0, embedded by a ScalarLens inside the model).
     """
     numeric = settings.get("numeric", "bucket")
-    if numeric not in ("bucket", "ple", "both"):
-        msg = f"preprocessing.numeric must be bucket, ple or both, got {numeric!r}"
+    if numeric not in ("bucket", "ple", "both", "scalarlens"):
+        msg = f"preprocessing.numeric must be bucket, ple, both or scalarlens, got {numeric!r}"
         raise ValueError(msg)
     steps: list = []
     fields = list(CATEGORICAL)
     if numeric in ("ple", "both"):  # before the bucketizer, which replaces the raw numerics
         steps.append(("ple", PiecewiseLinearEncoder(columns=NUMERIC, n_bins=settings["ple_bins"])))
         model_params["num_columns"] = ple_columns
+    if numeric == "scalarlens":
+        steps.append(("fill", MissingFiller(columns=NUMERIC, fill_value=0)))
+        model_params |= {"num_columns": NUMERIC, "scalarlens": True}
     if numeric in ("bucket", "both"):
         steps += [
             ("bucket", LogSquaredBucketizer(columns=NUMERIC)),

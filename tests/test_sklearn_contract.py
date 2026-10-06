@@ -27,6 +27,7 @@ from bars_dcn.estimator import DCNClassifier
 from bars_dcn.preprocessing import (
     AvazuTimeFeatures,
     LogSquaredBucketizer,
+    MissingFiller,
     MultiHashEncoder,
     OrdinalEncoder,
     PiecewiseLinearEncoder,
@@ -76,6 +77,12 @@ CASES = [
         "LogSquaredBucketizer",
         LogSquaredBucketizer,
         _numbers,
+        lambda est, x: est.transform(x).to_dict(as_series=False),
+    ),
+    Case(
+        "MissingFiller",
+        lambda: MissingFiller(fill_value=-1),
+        lambda: (pl.DataFrame({"n": [1.0, None, float("nan"), 4.0]}), None),
         lambda est, x: est.transform(x).to_dict(as_series=False),
     ),
     Case(

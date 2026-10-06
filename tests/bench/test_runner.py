@@ -83,11 +83,12 @@ def test_run_seed_on_the_sample_writes_metrics(tmp_path, name):
     [
         {"numeric": "ple", "ple_bins": 4},
         {"numeric": "both", "ple_bins": 4},
+        {"numeric": "scalarlens"},
         {"categorical": "multihash", "multihash_n_hashes": 2, "multihash_cardinality": 500},
         {"numeric": "ple", "ple_bins": 4, "categorical": "multihash", "multihash_n_hashes": 2,
          "multihash_cardinality": 500},
     ],
-    ids=["ple", "both", "multihash", "ple+multihash"],
+    ids=["ple", "both", "scalarlens", "multihash", "ple+multihash"],
 )  # fmt: skip
 def test_criteo_numeric_and_categorical_modes_train(tmp_path, preprocessing):
     parquet = tmp_path / "data" / "Criteo_x4" / "parquet"

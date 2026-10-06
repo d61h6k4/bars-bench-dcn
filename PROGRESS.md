@@ -378,3 +378,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (+0.0021 over log-squared bucket, +0.0011 over DEER; std <= 0.0002). The BARS recipe is already at
   0.8136-0.8145 with bucketized numerics, so the gain may not transfer; the numeric path is only 13 of
   39 fields. Their split sizes (36.67M / 4.58M / 4.58M) equal criteo_x4.
+- 2026-10-06: M9 steps 2-3 done: `DCNv2(scalarlens=True)` / `DCNClassifier(scalarlens=True)` (raw numeric block
+  embedded by `ScalarLens` into one token per field; training min/max recorded at fit), `MissingFiller`
+  transformer (null/NaN -> constant, float64; ONNX IsNaN/Where), ONNX estimator export accepts double
+  numeric columns (cast to float32 like at fit), bench `preprocessing.numeric = "scalarlens"`. ONNX parity
+  of a full pipeline with missing and far-out-of-range numerics. Step 4 (the run) is queued in
+  `experiments/m9_scalarlens.txt`, after M8 and M7 on the pod.

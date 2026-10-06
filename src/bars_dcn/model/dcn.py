@@ -8,6 +8,7 @@ from torch import Tensor, nn
 
 from bars_dcn.model.cross import CrossNetMix, CrossNetV2
 from bars_dcn.model.mlp import MLPBlock
+from bars_dcn.model.scalarlens import ScalarLens
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -15,6 +16,17 @@ if TYPE_CHECKING:
 Structure = Literal["crossnet_only", "stacked", "parallel", "stacked_parallel"]
 _STRUCTURES = ("crossnet_only", "stacked", "parallel", "stacked_parallel")
 _EMBEDDING_STD = 1e-4
+
+
+def _numeric_embedding(
+    num_features: int, n_fields: int, embedding_dim: int, scalarlens: bool
+) -> ScalarLens | None:
+    if not scalarlens:
+        return None
+    if not num_features:
+        msg = "scalarlens needs a numeric block (num_features > 0)"
+        raise ValueError(msg)
+    return ScalarLens(num_features, n_fields, embedding_dim)
 
 
 class DCNv2(nn.Module):
@@ -29,6 +41,10 @@ class DCNv2(nn.Module):
     ``structure``: ``crossnet_only`` (cross output feeds the final layer), ``stacked`` (cross
     output goes through the stacked MLP), ``parallel`` (cross and MLP outputs are concatenated)
     or ``stacked_parallel`` (both MLPs, outputs concatenated).
+
+    With ``scalarlens`` the numeric block is raw numerics, embedded by a :class:`ScalarLens` into
+    one ``embedding_dim`` token per field (call ``numeric_embedding.set_ranges`` with the training
+    ranges before use); otherwise the block is concatenated to the embeddings as it is.
     """
 
     offsets: Tensor
@@ -49,6 +65,7 @@ class DCNv2(nn.Module):
         batch_norm: bool = False,
         dropout: float = 0.0,
         shared_embedding: bool = False,
+        scalarlens: bool = False,
     ) -> None:
         super().__init__()
         if structure not in _STRUCTURES:
@@ -63,7 +80,12 @@ class DCNv2(nn.Module):
             offsets = [0, *accumulate(cat_cardinalities)][:-1]
         self.embedding = nn.Embedding(rows, embedding_dim)
         self.register_buffer("offsets", torch.tensor(offsets), persistent=False)
-        dim = len(cat_cardinalities) * embedding_dim + num_features
+        n_fields = len(cat_cardinalities)
+        self.numeric_embedding = _numeric_embedding(
+            num_features, n_fields, embedding_dim, scalarlens
+        )
+        numeric_dim = num_features * embedding_dim if scalarlens else num_features
+        dim = n_fields * embedding_dim + numeric_dim
 
         if use_low_rank_mixture:
             self.cross = CrossNetMix(dim, num_cross_layers, low_rank, num_experts)
@@ -105,11 +127,14 @@ class DCNv2(nn.Module):
                     nn.init.zeros_(module.bias)
 
     def forward(self, x_cat: Tensor, x_num: Tensor | None = None) -> Tensor:
-        features = self.embedding(x_cat + self.offsets).flatten(1)
+        embedded = self.embedding(x_cat + self.offsets)
+        features = embedded.flatten(1)
         if self.num_features:
             if x_num is None:
                 msg = f"model was built with num_features={self.num_features}, x_num is required"
                 raise ValueError(msg)
+            if self.numeric_embedding is not None:
+                x_num = self.numeric_embedding(x_num, embedded).flatten(1)
             features = torch.cat([features, x_num], dim=1)
 
         out = self.cross(features)

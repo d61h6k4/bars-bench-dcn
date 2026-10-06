@@ -1,0 +1,3 @@
+# M9: ScalarLens numeric embedding (raw numerics, missing -> 0) instead of the log-squared buckets,
+# criteo_x4, ablation seed 2022 (baseline: valid 0.813577, test 0.813972, LogLoss 0.438288).
+configs/criteo_x4_dcnv2.toml --name scalarlens --seeds 2022 --set preprocessing.numeric="scalarlens"

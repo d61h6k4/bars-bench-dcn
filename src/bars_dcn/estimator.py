@@ -46,6 +46,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     ``shared_embedding`` makes all positions share one embedding table (for ``MultiHashEncoder``
     outputs, which live in one hash space) instead of one table slice per field.
 
+    ``scalarlens`` embeds the numeric block with a ScalarLens (raw numerics in, one token per
+    field; training ranges are recorded at ``fit``).
+
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
     It may also be a function of the frame's column names (resolved at ``fit``), for encoders that
@@ -74,6 +77,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         num_columns: Sequence[str] | Callable[[list[str]], list[str]] | None = None,
         embedding_dim: int = 16,
         shared_embedding: bool = False,
+        scalarlens: bool = False,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
         use_low_rank_mixture: bool = False,
@@ -102,6 +106,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.num_columns = num_columns
         self.embedding_dim = embedding_dim
         self.shared_embedding = shared_embedding
+        self.scalarlens = scalarlens
         self.structure = structure
         self.num_cross_layers = num_cross_layers
         self.use_low_rank_mixture = use_low_rank_mixture
@@ -246,6 +251,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             num_features=self.n_numeric_in_,
             embedding_dim=self.embedding_dim,
             shared_embedding=self.shared_embedding,
+            scalarlens=self.scalarlens,
             structure=self.structure,
             num_cross_layers=self.num_cross_layers,
             use_low_rank_mixture=self.use_low_rank_mixture,
@@ -256,6 +262,10 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             batch_norm=self.batch_norm,
             dropout=self.dropout,
         )
+        if model.numeric_embedding is not None:
+            model.numeric_embedding.set_ranges(
+                torch.from_numpy(numeric.min(axis=0)), torch.from_numpy(numeric.max(axis=0))
+            )
         settings = TrainSettings(
             learning_rate=self.learning_rate,
             batch_size=self.batch_size,

@@ -10,7 +10,7 @@ import numpy as np
 import onnx
 import torch
 from onnx import helper
-from skl2onnx.common.data_types import FloatTensorType, Int64TensorType
+from skl2onnx.common.data_types import DoubleTensorType, FloatTensorType, Int64TensorType
 from torch.export import Dim
 
 if TYPE_CHECKING:
@@ -75,6 +75,51 @@ def _inline(scope, container, graph: onnx.GraphProto, input_names: list[str]) ->
     return names[graph.output[0].name]
 
 
+def _as_float(scope, container, variable) -> str:  # noqa: ANN001
+    """Return the variable as float32 (the numeric block is cast, as at fit time)."""
+    if not isinstance(variable.type, DoubleTensorType):
+        return variable.full_name
+    out = scope.get_unique_variable_name("float")
+    container.add_node(
+        "Cast",
+        variable.full_name,
+        out,
+        name=scope.get_unique_operator_name("Cast"),
+        to=onnx.TensorProto.FLOAT,
+    )
+    return out
+
+
+def _block(
+    scope,  # noqa: ANN001
+    container,  # noqa: ANN001
+    frame: dict,
+    names: object,
+    kinds: tuple[type, ...],
+    label: str,
+    prefix: str,
+) -> str:
+    """Concatenate the named frame columns into one ``(batch, n)`` block."""
+    names = [str(name) for name in names]  # ty: ignore[not-iterable]
+    missing = [name for name in names if name not in frame]
+    if missing:
+        msg = f"the estimator needs columns {missing}, which are not available at this step"
+        raise ValueError(msg)
+    wrong = [name for name in names if not isinstance(frame[name].type, kinds)]
+    if wrong:
+        msg = f"columns {wrong} reach the estimator without being encoded to {label}"
+        raise ValueError(msg)
+    out = scope.get_unique_variable_name(prefix)
+    container.add_node(
+        "Concat",
+        [_as_float(scope, container, frame[name]) for name in names],
+        out,
+        name=scope.get_unique_operator_name("Concat"),
+        axis=1,
+    )
+    return out
+
+
 def converter(scope, operator, container) -> None:  # noqa: ANN001
     estimator: DCNClassifier = operator.raw_operator
     if estimator.classes_.dtype.kind not in "iu":
@@ -87,29 +132,19 @@ def converter(scope, operator, container) -> None:  # noqa: ANN001
     # the model's fields, in fit order, from the frame the previous steps produced
     frame = {variable.raw_name: variable for variable in operator.inputs}
 
-    def block(names: object, kind: type, label: str, prefix: str) -> str:
-        names = [str(name) for name in names]  # ty: ignore[not-iterable]
-        missing = [name for name in names if name not in frame]
-        if missing:
-            msg = f"the estimator needs columns {missing}, which are not available at this step"
-            raise ValueError(msg)
-        wrong = [name for name in names if not isinstance(frame[name].type, kind)]
-        if wrong:
-            msg = f"columns {wrong} reach the estimator without being encoded to {label}"
-            raise ValueError(msg)
-        out = scope.get_unique_variable_name(prefix)
-        container.add_node(
-            "Concat",
-            [frame[name].full_name for name in names],
-            out,
-            name=scope.get_unique_operator_name("Concat"),
-            axis=1,
+    inputs = [
+        _block(
+            scope, container, frame, estimator.feature_names_in_,
+            (Int64TensorType,), "integer indices", "x_cat",
         )
-        return out
-
-    inputs = [block(estimator.feature_names_in_, Int64TensorType, "integer indices", "x_cat")]
+    ]  # fmt: skip
     if estimator.n_numeric_in_:
-        inputs.append(block(estimator.numeric_names_in_, FloatTensorType, "float32", "x_num"))
+        inputs.append(
+            _block(
+                scope, container, frame, estimator.numeric_names_in_,
+                (FloatTensorType, DoubleTensorType), "floats", "x_num",
+            )
+        )  # fmt: skip
 
     graph = export_logit_graph(
         estimator.model_, estimator.n_features_in_, estimator.n_numeric_in_
