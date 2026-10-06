@@ -71,6 +71,7 @@ def run_seed(config: dict, seed: int, out_dir: Path, data_root: Path = Path("dat
 
     target = out_dir / f"seed_{seed}"
     pipeline = build_pipeline(config, seed, log_dir=target / "tensorboard")
+    logger.info("seed %d: fitting vocabulary and preprocessing, then training", seed)
     start = time.perf_counter()
     fit_pipeline(pipeline, train_x, train_y, eval_set=(valid_x, valid_y))
     fit_seconds = time.perf_counter() - start

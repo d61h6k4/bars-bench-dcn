@@ -1,6 +1,7 @@
 """BARS ``criteo_x4`` / ``avazu_x4`` splits: MD5-verified CSV -> typed parquet, cached on disk."""
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,8 @@ import polars as pl
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -71,10 +74,12 @@ def dataset_parquet(dataset: Dataset, data_root: Path, split: str) -> Path:
     if parquet.exists():
         return parquet
     csv = directory / f"{split}.csv"
+    logger.info("verifying MD5 of %s", csv)
     actual = md5_of(csv)
     if actual != dataset.md5[split]:
         msg = f"{csv} MD5 mismatch: expected {dataset.md5[split]}, got {actual}"
         raise ValueError(msg)
+    logger.info("converting %s to parquet", csv)
     parquet.parent.mkdir(parents=True, exist_ok=True)
     # Read as String and cast: inference would turn all-digit hex ids into integers.
     temporary = parquet.with_suffix(".tmp")

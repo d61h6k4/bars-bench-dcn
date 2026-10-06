@@ -8,6 +8,7 @@ Every piece is a parameter of :class:`TrainSettings`.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -49,6 +50,7 @@ class TrainSettings:
     device: str = "auto"
     num_workers: int = 0  # DataLoader worker processes gathering batches ahead of the step
     prefetch_factor: int = 2  # batches each worker keeps ready (only with num_workers > 0)
+    log_every_steps: int = 500  # progress line (loss, steps/s) every this many steps; 0 disables
     log_dir: str | None = None
     seed: int | None = None
 
@@ -139,6 +141,7 @@ def _run_epoch(
     """One pass over the (already shuffled and device-placed) batches; returns the mean loss."""
     model.train()
     total, steps = torch.zeros((), device=accelerator.device), 0
+    started = time.perf_counter()
     for index, labels in loader:
         optimizer.zero_grad(set_to_none=True)
         loss = functional.binary_cross_entropy_with_logits(model(index.long()), labels)
@@ -149,6 +152,12 @@ def _run_epoch(
         optimizer.step()
         total += loss.detach()
         steps += 1
+        if settings.log_every_steps and steps % settings.log_every_steps == 0:
+            elapsed = time.perf_counter() - started  # float() syncs the device, so this is honest
+            logger.info(
+                "step %d/%d: mean loss %.4f, %.1f steps/s",
+                steps, len(loader), float(total) / steps, steps / elapsed,
+            )  # fmt: skip
     return float(total) / max(steps, 1)
 
 
