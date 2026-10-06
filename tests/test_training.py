@@ -297,3 +297,39 @@ def test_progress_is_logged_every_n_steps(caplog):
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("step ")]
     assert [line.split(":")[0] for line in lines] == ["step 2/4", "step 4/4"]
     assert "steps/s" in lines[0]
+
+
+class TestFixedLearningRateSchedule:
+    def _fit(self, **kwargs):
+        x, y = _toy(200)
+        return DCNClassifier(
+            embedding_dim=2, parallel_hidden_units=[4], batch_size=64, max_epochs=5,
+            device="cpu", random_state=0, **kwargs,
+        ).fit(x, y, eval_set=(x, y))  # fmt: skip
+
+    def test_the_lr_drops_exactly_after_the_listed_epochs(self):
+        model = self._fit(lr_drop_epochs=[2, 4], early_stopping_patience=100)
+        lrs = [h["lr"] for h in model.history_]
+        np.testing.assert_allclose(lrs, [1e-3, 1e-3, 1e-4, 1e-4, 1e-5])
+
+    def test_the_plateau_decision_does_not_move_the_lr_under_a_fixed_schedule(self):
+        from bars_dcn.training import Decision, TrainSettings, _next_lr  # noqa: PLC0415
+
+        plateau = Decision(improved=False, lr=1e-4, stop=False)  # what the plateau rule would do
+        fixed = TrainSettings(lr_drop_epochs=(3,))
+        assert _next_lr(fixed, epoch=1, lr=1e-3, decision=plateau) == pytest.approx(1e-3)
+        assert _next_lr(fixed, epoch=3, lr=1e-3, decision=None) == pytest.approx(1e-4)
+        assert _next_lr(TrainSettings(), epoch=1, lr=1e-3, decision=plateau) == pytest.approx(1e-4)
+
+    def test_early_stopping_and_restore_best_still_work(self):
+        model = self._fit(lr_drop_epochs=[1], early_stopping_patience=1)
+        assert model.best_epoch_ is not None
+        assert model.best_epoch_ <= len(model.history_)
+
+    def test_it_also_applies_without_an_eval_set(self):
+        x, y = _toy(200)
+        model = DCNClassifier(
+            embedding_dim=2, parallel_hidden_units=[4], batch_size=64, max_epochs=3,
+            device="cpu", lr_drop_epochs=[1], random_state=0,
+        ).fit(x, y)  # fmt: skip
+        np.testing.assert_allclose([h["lr"] for h in model.history_], [1e-3, 1e-4, 1e-4])

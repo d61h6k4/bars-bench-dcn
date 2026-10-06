@@ -324,4 +324,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   Exact-equality checks: bucketizer vs polars over 6M integers incl. 2^31-1; weekday/hour/weekend
   vs polars for every day 2000-2068. Removed `test_unsupported` (those cases are now supported).
   `DCNClassifier` now records `feature_names_in_` when fitted on a polars frame.
+- 2026-10-06: M8 infrastructure: `lr_drop_epochs` (fixed LR schedule replacing the plateau trigger),
+  `python -m bars_dcn.bench --set section.key=value --name N`, `python -m bars_dcn.bench.queue FILE
+  --parallel K` (runs a file of jobs concurrently, echoes only epoch/RESULT lines, full logs in
+  runs/logs/), `scripts/pod_run.sh` (pod entrypoint: install, data, queue). Batch 1
+  (`experiments/m8_lr_schedule.txt`): LR drop after epoch 4/5/6/7 on criteo, seeds 2021-2023.
 

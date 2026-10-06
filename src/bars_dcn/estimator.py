@@ -46,7 +46,10 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     exactly ``max_epochs`` at a fixed rate. ``device="auto"`` lets accelerate pick cuda / mps /
     cpu for training; prediction always runs on the CPU. ``history_`` has one dict per epoch.
     ``num_workers`` / ``prefetch_factor`` configure the training ``DataLoader`` (gather ahead of the
-    step); the row order does not depend on them. ``log_dir`` writes TensorBoard epoch metrics and
+    step); the row order does not depend on them. ``lr_drop_epochs`` replaces the plateau-triggered
+    LR schedule by a fixed one (the LR is scaled by ``lr_reduce_factor`` after those epochs; early
+    stopping still tracks the validation AUC).
+    ``log_dir`` writes TensorBoard epoch metrics and
     signal-propagation plots there.
     """
 
@@ -72,6 +75,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         early_stopping_patience: int = 2,
         lr_reduce_factor: float = 0.1,
         min_lr: float = 1e-6,
+        lr_drop_epochs: Sequence[int] | None = None,
         device: str = "auto",
         num_workers: int = 0,
         prefetch_factor: int = 2,
@@ -97,6 +101,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.early_stopping_patience = early_stopping_patience
         self.lr_reduce_factor = lr_reduce_factor
         self.min_lr = min_lr
+        self.lr_drop_epochs = lr_drop_epochs
         self.device = device
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
@@ -196,6 +201,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             patience=self.early_stopping_patience,
             lr_reduce_factor=self.lr_reduce_factor,
             min_lr=self.min_lr,
+            lr_drop_epochs=None if self.lr_drop_epochs is None else tuple(self.lr_drop_epochs),
             device=self.device,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,

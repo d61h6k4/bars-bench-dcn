@@ -1,5 +1,6 @@
 """Run one (config, seed): fit the pipeline on train, early-stop on valid, score on test."""
 
+import copy
 import json
 import logging
 import time
@@ -28,6 +29,29 @@ logger = logging.getLogger(__name__)
 
 def load_config(path: Path) -> dict:
     return tomllib.loads(path.read_text())
+
+
+def apply_overrides(config: dict, overrides: list[str]) -> dict:
+    """Return a copy of ``config`` with ``section.key=value`` overrides (values are TOML)."""
+    result = copy.deepcopy(config)
+    for override in overrides:
+        key, separator, raw = override.partition("=")
+        section, dot, name = key.partition(".")
+        if not (separator and dot and name):
+            msg = f"override {override!r} must look like section.key=value"
+            raise ValueError(msg)
+        if section not in result:
+            msg = f"override {override!r}: unknown section {section!r}; sections: {sorted(result)}"
+            raise ValueError(msg)
+        result[section][name] = tomllib.loads(f"value = {raw}")["value"]
+    return result
+
+
+def prepare(config: dict, data_root: Path = Path("data")) -> None:
+    """Build (and MD5-verify) the parquet files of the configured dataset."""
+    dataset = DATASETS[config["dataset"]["name"]]
+    for split in dataset.md5:
+        dataset_parquet(dataset, data_root, split)
 
 
 def build_pipeline(config: dict, seed: int, log_dir: Path | None = None) -> Pipeline:
@@ -89,6 +113,7 @@ def run_seed(config: dict, seed: int, out_dir: Path, data_root: Path = Path("dat
             "auc": float(roc_auc_score(test_y, probabilities)),
             "logloss": float(log_loss(test_y, probabilities, labels=[0, 1])),
         },
+        "config": config,
         "n_parameters": sum(p.numel() for p in model.model_.parameters()),
         "fit_seconds": fit_seconds,
         "history": model.history_,
@@ -96,4 +121,6 @@ def run_seed(config: dict, seed: int, out_dir: Path, data_root: Path = Path("dat
     target.mkdir(parents=True, exist_ok=True)
     (target / "metrics.json").write_text(json.dumps(metrics, indent=2))
     logger.info("seed %d: valid %s test %s", seed, metrics["valid"], metrics["test"])
+    summary = {k: v for k, v in metrics.items() if k not in ("history", "config")}
+    logger.info("RESULT %s %s", out_dir.name, json.dumps(summary))
     return metrics

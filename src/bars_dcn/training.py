@@ -50,6 +50,7 @@ class TrainSettings:
     device: str = "auto"
     num_workers: int = 0  # DataLoader worker processes gathering batches ahead of the step
     prefetch_factor: int = 2  # batches each worker keeps ready (only with num_workers > 0)
+    lr_drop_epochs: tuple[int, ...] | None = None  # fixed schedule: scale the LR after these epochs
     log_every_steps: int = 500  # progress line (loss, steps/s) every this many steps; 0 disables
     log_dir: str | None = None
     seed: int | None = None
@@ -210,6 +211,15 @@ class _TensorBoard:
         self.spp(model, epoch)
 
 
+def _next_lr(settings: TrainSettings, epoch: int, lr: float, decision: Decision | None) -> float:
+    """Return the next epoch's learning rate: plateau-triggered, or the fixed ``lr_drop_epochs``."""
+    if settings.lr_drop_epochs is None:
+        return lr if decision is None else decision.lr
+    if epoch in settings.lr_drop_epochs:
+        return max(lr * settings.lr_reduce_factor, settings.min_lr)
+    return lr
+
+
 def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
     for group in optimizer.param_groups:
         group["lr"] = lr
@@ -224,7 +234,8 @@ def fit_network(
 ) -> tuple[DCNv2, TrainResult]:
     """Train ``model`` on ``index``/``target``; returns it on the CPU with the best weights.
 
-    Without ``valid`` it trains exactly ``max_epochs`` at a fixed learning rate.
+    Without ``valid`` it trains exactly ``max_epochs`` (at a fixed learning rate unless
+    ``lr_drop_epochs`` is set); with ``valid`` the LR drops on plateaus, or as scheduled.
     """
     accelerator = make_accelerator(settings.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=settings.learning_rate)
@@ -256,15 +267,16 @@ def fit_network(
     for epoch in range(1, settings.max_epochs + 1):
         loss = _run_epoch(model, optimizer, accelerator, loader, settings)
         record = {"epoch": float(epoch), "lr": lr, "train_loss": loss}
-        stop = False
+        stop, decision = False, None
         if valid is not None:
             record["val_auc"], record["val_logloss"] = _validate(model, valid)
             decision = stopper.update(record["val_auc"], lr)
             if decision.improved:
                 best_epoch = epoch
                 best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            lr, stop = decision.lr, decision.stop
-            _set_lr(optimizer, lr)
+            stop = decision.stop
+        lr = _next_lr(settings, epoch, lr, decision)
+        _set_lr(optimizer, lr)
         history.append(record)
         if board is not None:
             board.epoch(model, record)

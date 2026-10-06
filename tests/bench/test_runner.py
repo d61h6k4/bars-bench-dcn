@@ -1,11 +1,13 @@
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from bars_dcn.bench.data import CRITEO_X4, DATASETS, dataset_parquet, md5_of
-from bars_dcn.bench.runner import build_pipeline, load_config, run_seed
+from bars_dcn.bench.runner import apply_overrides, build_pipeline, load_config, run_seed
 
 ROOT = Path(__file__).parents[2]
 CONFIG = ROOT / "configs" / "criteo_x4_dcnv2.toml"
@@ -101,3 +103,91 @@ def test_csv_with_wrong_md5_is_rejected(tmp_path):
 def test_md5_of(tmp_path):
     (tmp_path / "a").write_bytes(b"abc")
     assert md5_of(tmp_path / "a") == "900150983cd24fb0d6963f7d28e17f72"
+
+
+class TestOverrides:
+    def test_values_are_toml_and_the_original_is_untouched(self):
+        config = load_config(CONFIG)
+        changed = apply_overrides(
+            config, ["model.lr_drop_epochs=[6]", "model.dropout=0.2", 'model.device="cpu"']
+        )
+        assert changed["model"]["lr_drop_epochs"] == [6]
+        assert changed["model"]["dropout"] == 0.2
+        assert changed["model"]["device"] == "cpu"
+        assert "lr_drop_epochs" not in config["model"]
+        assert config["model"]["device"] == "mps"
+
+    @pytest.mark.parametrize("bad", ["model.dropout", "dropout=0.1", "nosuch.key=1", "model.x=[1,"])
+    def test_bad_overrides_are_rejected(self, bad):
+        with pytest.raises(ValueError, match=r"override|Invalid|expected"):
+            apply_overrides(load_config(CONFIG), [bad])
+
+
+@pytest.fixture
+def small_setup(tmp_path):
+    """A tiny criteo config and a data root holding the committed sample."""
+    parquet = tmp_path / "data" / "Criteo_x4" / "parquet"
+    parquet.mkdir(parents=True)
+    for split in CRITEO_X4.md5:
+        shutil.copy(ROOT / "tests" / "data" / "criteo_x4_sample" / f"{split}.parquet", parquet)
+    config = load_config(CONFIG)
+    config["model"] |= {"parallel_hidden_units": [8], "embedding_dim": 4, "batch_size": 2048}
+    config["preprocessing"]["min_categr_count"] = 3
+    small = tmp_path / "small.toml"
+    small.write_text(
+        "\n".join(
+            f"[{section}]\n" + "\n".join(f"{k} = {json.dumps(v)}" for k, v in values.items())
+            for section, values in config.items()
+        )
+    )
+    return small, tmp_path / "data"
+
+
+def _queue(tmp_path, small, data_root, lines, *extra):
+    queue = tmp_path / "queue.txt"
+    queue.write_text(lines.format(small=small))
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "bars_dcn.bench.queue", str(queue), "--device", "cpu",
+         "--data-root", str(data_root), *extra],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+
+
+def test_queue_runs_jobs_in_parallel_and_reports_results(tmp_path, small_setup):
+    small, data_root = small_setup
+    done = _queue(
+        tmp_path, small, data_root,
+        "# comment\n"
+        "{small} --name a --seeds 1 --set model.max_epochs=2 --set model.lr_drop_epochs=[1]\n"
+        "{small} --name b --seeds 2 --set model.max_epochs=2\n",
+        "--parallel", "2",
+    )  # fmt: skip
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "QUEUE_START 2 jobs, 2 in parallel" in done.stdout
+    assert "QUEUE_DONE" in done.stdout
+    results = [line for line in done.stdout.splitlines() if "RESULT" in line]
+    assert {line.split("]")[0] for line in results} == {"[a", "[b"}
+    first = json.loads((tmp_path / "runs" / "a" / "seed_1" / "metrics.json").read_text())
+    assert first["config"]["model"]["lr_drop_epochs"] == [1]
+    assert [h["lr"] for h in first["history"]] == pytest.approx([1e-3, 1e-4])
+    assert (tmp_path / "runs" / "logs" / "00_a.log").exists()
+
+
+def test_a_failing_job_makes_the_queue_fail_but_the_others_finish(tmp_path, small_setup):
+    small, data_root = small_setup
+    done = _queue(
+        tmp_path, small, data_root,
+        "{small} --name bad --set model.max_epochs=1 --set model.nosuch_parameter=1\n"
+        "{small} --name good --seeds 3 --set model.max_epochs=1\n",
+        "--parallel", "2",
+    )  # fmt: skip
+    assert done.returncode != 0
+    assert "QUEUE_JOB bad exit=1" in done.stdout
+    assert "QUEUE_JOB good exit=0" in done.stdout
+
+
+def test_a_bad_override_fails_before_any_job_starts(tmp_path, small_setup):
+    small, data_root = small_setup
+    done = _queue(tmp_path, small, data_root, "{small} --name x --set nosuch.key=1\n")
+    assert done.returncode != 0
+    assert "QUEUE_START" not in done.stdout
