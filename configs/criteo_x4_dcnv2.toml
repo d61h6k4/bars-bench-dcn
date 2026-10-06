@@ -1,0 +1,26 @@
+# BARS-CTR DCNv2_criteo_x4_001_005_c2376d55 (FuxiCTR v2.2.0), see tests/data/bars_dcnv2_criteo_x4_001.json.
+# Expected: valid AUC 0.814037, test AUC 0.814514, test LogLoss 0.437631, 20,382,577 parameters.
+# The BARS run used seed 2019.
+
+[dataset]
+name = "criteo_x4"
+
+[preprocessing]
+min_categr_count = 10
+
+[model]
+structure = "parallel"
+num_cross_layers = 3
+parallel_hidden_units = [1000, 1000, 1000, 1000, 1000]
+batch_norm = true
+dropout = 0.1
+embedding_dim = 16
+learning_rate = 1e-3
+batch_size = 10000
+max_epochs = 100
+embedding_regularizer = 1e-5
+max_grad_norm = 10.0
+early_stopping_patience = 2
+lr_reduce_factor = 0.1
+min_lr = 1e-6
+device = "mps"

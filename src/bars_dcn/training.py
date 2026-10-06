@@ -1,0 +1,267 @@
+"""Training loop replicating FuxiCTR v2.2.0's ``BaseModel.fit`` (the BARS DCNv2 recipe).
+
+Replicated: Adam, BCE, ``(lambda / 2) * ||W||^2`` on the embedding table added to every batch's
+loss, gradient-norm clipping, shuffling every epoch, validation AUC after every epoch, learning
+rate x``lr_reduce_factor`` (floored at ``min_lr``) on every non-improving epoch, early stopping
+after ``patience`` consecutive non-improving epochs, and restoring the best epoch's weights.
+Every piece is a parameter of :class:`TrainSettings`.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, NamedTuple
+
+import numpy as np
+import torch
+from accelerate import Accelerator
+from accelerate.state import AcceleratorState
+from sklearn.metrics import log_loss, roc_auc_score
+from torch.nn import functional
+
+from bars_dcn.diagnostics import probe
+
+if TYPE_CHECKING:
+    from torch.utils.tensorboard import SummaryWriter
+
+    from bars_dcn.model import DCNv2
+
+logger = logging.getLogger(__name__)
+
+PREDICT_CHUNK = 100_000
+PROBE_ROWS = 2048
+
+
+@dataclass(frozen=True)
+class TrainSettings:
+    """Defaults are the BARS DCNv2 criteo_x4 recipe."""
+
+    learning_rate: float = 1e-3
+    batch_size: int = 10_000
+    max_epochs: int = 100
+    embedding_regularizer: float = 1e-5
+    max_grad_norm: float = 10.0
+    patience: int = 2
+    lr_reduce_factor: float = 0.1
+    min_lr: float = 1e-6
+    min_delta: float = 1e-6
+    device: str = "auto"
+    log_dir: str | None = None
+    seed: int | None = None
+
+
+class Decision(NamedTuple):
+    improved: bool
+    lr: float
+    stop: bool
+
+
+class PlateauStopper:
+    """FuxiCTR's ``checkpoint_and_earlystop`` for a metric that is maximized.
+
+    An epoch improves if ``metric >= best + min_delta``. Every non-improving epoch multiplies the
+    learning rate by ``lr_reduce_factor`` (floored at ``min_lr``) and counts towards ``patience``;
+    an improvement resets the count (the learning rate is not restored).
+    """
+
+    def __init__(
+        self,
+        patience: int = 2,
+        lr_reduce_factor: float = 0.1,
+        min_lr: float = 1e-6,
+        min_delta: float = 1e-6,
+    ) -> None:
+        self.patience = patience
+        self.lr_reduce_factor = lr_reduce_factor
+        self.min_lr = min_lr
+        self.min_delta = min_delta
+        self.best = -np.inf
+        self.stalled = 0
+
+    def update(self, metric: float, lr: float) -> Decision:
+        if metric < self.best + self.min_delta:
+            self.stalled += 1
+            lr = max(lr * self.lr_reduce_factor, self.min_lr)
+            return Decision(improved=False, lr=lr, stop=self.stalled >= self.patience)
+        self.stalled = 0
+        self.best = metric
+        return Decision(improved=True, lr=lr, stop=False)
+
+
+class TrainResult(NamedTuple):
+    history: list[dict[str, float]]
+    best_epoch: int | None
+
+
+def embedding_penalty(model: DCNv2, regularizer: float) -> torch.Tensor:
+    """``(lambda / 2) * ||W||^2`` over the embedding table (FuxiCTR's L2 regularizer)."""
+    return 0.5 * regularizer * model.embedding.weight.pow(2).sum()
+
+
+def make_accelerator(device: str) -> Accelerator:
+    """Return a fresh ``Accelerator``; ``"auto"`` lets accelerate pick, ``"mps"`` demands MPS."""
+    if device not in ("auto", "cpu", "mps"):
+        msg = f"device must be 'auto', 'cpu' or 'mps', got {device!r}"
+        raise ValueError(msg)
+    AcceleratorState._reset_state(reset_partial_state=True)  # noqa: SLF001
+    accelerator = Accelerator(cpu=device == "cpu")
+    if device == "mps" and accelerator.device.type != "mps":
+        msg = f"device='mps' requested but accelerate selected {accelerator.device}"
+        raise RuntimeError(msg)
+    return accelerator
+
+
+def predict_logits(model: DCNv2, index: np.ndarray) -> np.ndarray:
+    """Logits for an index block, in chunks, on the model's device (eval mode, no gradients)."""
+    device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, len(index), PREDICT_CHUNK):
+            batch = torch.from_numpy(index[start : start + PREDICT_CHUNK]).long().to(device)
+            chunks.append(model(batch).cpu())
+    model.train(was_training)
+    return torch.cat(chunks).numpy() if chunks else np.empty(0, dtype=np.float32)
+
+
+def _run_epoch(
+    model: DCNv2,
+    optimizer: torch.optim.Optimizer,
+    accelerator: Accelerator,
+    index: np.ndarray,
+    target: np.ndarray,
+    settings: TrainSettings,
+    generator: torch.Generator,
+) -> float:
+    """One shuffled pass over the data; returns the mean batch loss (BCE + penalty)."""
+    device = accelerator.device
+    model.train()
+    order = torch.randperm(len(index), generator=generator).numpy()
+    total, steps = torch.zeros((), device=device), 0
+    for start in range(0, len(index), settings.batch_size):
+        rows = order[start : start + settings.batch_size]
+        if len(rows) < 2:  # noqa: PLR2004 - BatchNorm cannot train on a single row
+            continue
+        batch = torch.from_numpy(index[rows]).long().to(device)
+        labels = torch.from_numpy(target[rows]).to(device)
+        optimizer.zero_grad(set_to_none=True)
+        loss = functional.binary_cross_entropy_with_logits(model(batch), labels)
+        if settings.embedding_regularizer:
+            loss = loss + embedding_penalty(model, settings.embedding_regularizer)
+        accelerator.backward(loss)
+        accelerator.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
+        optimizer.step()
+        total += loss.detach()
+        steps += 1
+    return float(total) / max(steps, 1)
+
+
+def _validate(model: DCNv2, valid: tuple[np.ndarray, np.ndarray]) -> tuple[float, float]:
+    """Return validation AUC and log loss, computed in float64 like FuxiCTR."""
+    index, target = valid
+    probabilities = torch.sigmoid(torch.from_numpy(predict_logits(model, index))).numpy()
+    probabilities = probabilities.astype(np.float64)
+    return (
+        float(roc_auc_score(target, probabilities)),
+        float(log_loss(target, probabilities, labels=[0, 1])),
+    )
+
+
+def _summary_writer(path: str) -> SummaryWriter:
+    """Create a TensorBoard writer; ``tensorboard`` is a dev dependency, imported only when used."""
+    from torch.utils.tensorboard import SummaryWriter  # noqa: PLC0415
+
+    return SummaryWriter(path)
+
+
+class _TensorBoard:
+    """Epoch scalars (``<log_dir>/metrics``) and signal-propagation runs (``spp/epoch_N``).
+
+    The probe batch is the first ``PROBE_ROWS`` training rows, the same at every epoch; epoch 0 is
+    the state before any update.
+    """
+
+    def __init__(
+        self, log_dir: str, index: np.ndarray, target: np.ndarray, device: torch.device
+    ) -> None:
+        self.log_dir = log_dir
+        self.writer = _summary_writer(f"{log_dir}/metrics")
+        rows = slice(0, PROBE_ROWS)
+        self.batch = (
+            torch.from_numpy(index[rows]).long().to(device),
+            torch.from_numpy(target[rows]).to(device),
+        )
+
+    def spp(self, model: DCNv2, epoch: int) -> None:
+        with _summary_writer(f"{self.log_dir}/spp/epoch_{epoch:03d}") as writer:
+            probe(model, *self.batch, writer)
+
+    def epoch(self, model: DCNv2, record: dict[str, float]) -> None:
+        epoch = int(record["epoch"])
+        for key, value in record.items():
+            if key != "epoch":
+                self.writer.add_scalar(f"epoch/{key}", value, epoch)
+        self.writer.flush()
+        self.spp(model, epoch)
+
+
+def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+
+
+def fit_network(
+    model: DCNv2,
+    index: np.ndarray,
+    target: np.ndarray,
+    settings: TrainSettings,
+    valid: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[DCNv2, TrainResult]:
+    """Train ``model`` on ``index``/``target``; returns it on the CPU with the best weights.
+
+    Without ``valid`` it trains exactly ``max_epochs`` at a fixed learning rate.
+    """
+    accelerator = make_accelerator(settings.device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=settings.learning_rate)
+    model, optimizer = accelerator.prepare(model, optimizer)
+    generator = torch.Generator()
+    if settings.seed is not None:
+        generator.manual_seed(settings.seed)
+    stopper = PlateauStopper(
+        settings.patience, settings.lr_reduce_factor, settings.min_lr, settings.min_delta
+    )
+
+    board = None
+    if settings.log_dir:
+        board = _TensorBoard(settings.log_dir, index, target, accelerator.device)
+        board.spp(model, epoch=0)
+
+    history: list[dict[str, float]] = []
+    best_state, best_epoch = None, None
+    lr = settings.learning_rate
+    for epoch in range(1, settings.max_epochs + 1):
+        loss = _run_epoch(model, optimizer, accelerator, index, target, settings, generator)
+        record = {"epoch": float(epoch), "lr": lr, "train_loss": loss}
+        stop = False
+        if valid is not None:
+            record["val_auc"], record["val_logloss"] = _validate(model, valid)
+            decision = stopper.update(record["val_auc"], lr)
+            if decision.improved:
+                best_epoch = epoch
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            lr, stop = decision.lr, decision.stop
+            _set_lr(optimizer, lr)
+        history.append(record)
+        if board is not None:
+            board.epoch(model, record)
+        logger.info("epoch %d: %s", epoch, {k: round(v, 6) for k, v in record.items()})
+        if stop:
+            break
+
+    if board is not None:
+        board.writer.close()
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model = accelerator.unwrap_model(model).cpu()
+    accelerator.free_memory()
+    return model, TrainResult(history, best_epoch)

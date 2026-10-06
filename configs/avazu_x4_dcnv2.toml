@@ -1,0 +1,27 @@
+# BARS-CTR DCNv2_avazu_x4_001 (expid DCNv2_avazu_x4_011_19794dc6, FuxiCTR v1.1.1), see
+# tests/data/bars_dcnv2_avazu_x4_001.json.
+# Expected: valid AUC 0.792978, test AUC 0.793146, test LogLoss 0.371865, 73,385,345 parameters.
+# The BARS run used seed 2019 and stopped after epoch 3 (best epoch 1).
+
+[dataset]
+name = "avazu_x4"
+
+[preprocessing]
+min_categr_count = 2
+
+[model]
+structure = "parallel"
+num_cross_layers = 4
+parallel_hidden_units = [2000, 2000, 2000, 2000]
+batch_norm = false
+dropout = 0.0
+embedding_dim = 16
+learning_rate = 1e-3
+batch_size = 10000
+max_epochs = 100
+embedding_regularizer = 1e-9
+max_grad_norm = 10.0
+early_stopping_patience = 2
+lr_reduce_factor = 0.1
+min_lr = 1e-6
+device = "mps"

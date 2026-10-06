@@ -1,0 +1,71 @@
+[project]
+name = "bars-bench-dcn"
+version = "0.1.0"
+description = "Production-grade DCNv2 (sklearn API, full-pipeline ONNX export) benchmarked on BARS-CTR"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "accelerate>=1.15.0",
+    "numpy>=2.5.3",
+    "onnx>=1.23.2",
+    "onnxruntime>=1.30.0",
+    "onnxscript>=0.7.2",
+    "polars>=1.44.2",
+    "scikit-learn>=1.9.1",
+    "skl2onnx>=1.20.0",
+    "torch>=2.14.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+    "tensorboard>=2.21.0",
+    "ty>=0.0.84",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bars_dcn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["full_data: needs the full Criteo_x4 CSVs under data/ (slow); run with -m full_data"]
+addopts = "-m 'not full_data'"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401",  # Any is acceptable at sklearn boundaries
+    "ARG002",  # sklearn API: fit(X, y) with unused y
+    "COM812",  # conflicts with the formatter
+    "CPY001",  # no license headers
+    "D1",      # no mandatory docstrings
+    "D203",    # conflicts with D211
+    "D213",    # conflicts with D212
+    "EM",      # inline exception messages are fine
+    "FBT",     # boolean flags are normal in sklearn-style APIs
+    "N803",    # sklearn convention: X
+    "N806",    # sklearn convention: X
+    "TD",
+    "TRY003",  # long messages outside the exception class are fine
+    "FIX",
+]
+
+[tool.ruff.lint.pylint]
+max-args = 30  # flat sklearn-style hyperparameters
+
+[tool.ruff.lint.per-file-ignores]
+# sklearn components: get_params/set_params/clone/repr call inspect.signature on __init__, and
+# get_metadata_routing does the same for fit/predict/..., which evaluates annotations at runtime
+# on 3.14. Annotation-only imports therefore must stay real imports (not TYPE_CHECKING).
+"src/bars_dcn/estimator.py" = ["TC001", "TC002", "TC003"]
+"src/bars_dcn/preprocessing/**" = ["TC001", "TC002", "TC003"]
+"scripts/**" = ["T201", "INP001"]
+"tests/**" = ["S101", "ANN", "D", "INP001", "PLR2004"]

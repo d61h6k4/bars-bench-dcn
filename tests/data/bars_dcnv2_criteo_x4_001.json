@@ -1,0 +1,50 @@
+{
+  "_comment": "BARS-CTR reference run DCNv2_criteo_x4_001_005_c2376d55 (FuxiCTR v2.2.0). One possible config, not the only one. Facts taken from the BARS README log and FuxiCTR v2.2.0 source; vocab sizes and the parameter count were re-derived from the full Criteo_x4 train split and the architecture (see ARCHITECTURE.md).",
+  "sources": {
+    "bars_readme": "https://github.com/reczoo/BARS/blob/main/ranking/ctr/DCNv2/DCNv2_criteo_x4_001/README.md",
+    "fuxictr_tag": "https://github.com/reczoo/FuxiCTR/tree/v2.2.0"
+  },
+  "model": {
+    "model_structure": "parallel",
+    "use_low_rank_mixture": false,
+    "num_cross_layers": 3,
+    "parallel_dnn_hidden_units": [1000, 1000, 1000, 1000, 1000],
+    "dnn_activations": "relu",
+    "batch_norm": true,
+    "net_dropout": 0.1,
+    "embedding_dim": 16
+  },
+  "training": {
+    "optimizer": "adam",
+    "learning_rate": 0.001,
+    "batch_size": 10000,
+    "epochs": 100,
+    "loss": "binary_crossentropy",
+    "embedding_regularizer": 1e-05,
+    "net_regularizer": 0,
+    "early_stop_patience": 2,
+    "monitor": "AUC",
+    "reduce_lr_on_plateau": {"factor": 0.1, "min_lr": 1e-06},
+    "max_gradient_norm": 10.0,
+    "seed": 2019
+  },
+  "preprocessing": {
+    "min_categr_count": 10,
+    "numeric_bucket": "x > 2 ? floor(ln(x)^2) : int(x); null filled with 0 first; treated as categorical",
+    "na_token_excluded_from_vocab": "categorical: empty string; numeric: 0",
+    "vocab": "tokens with count >= 10 get indices 1..n; __PAD__=0 (never produced); __OOV__=n+1; missing, rare and unseen values all map to __OOV__"
+  },
+  "expected": {
+    "total_parameters": 20382577,
+    "valid": {"auc": 0.814037, "logloss": 0.438087},
+    "test": {"auc": 0.814514, "logloss": 0.437631}
+  },
+  "vocab_sizes": {
+    "C1": 1446, "C2": 554, "C3": 157339, "C4": 117822, "C5": 306, "C6": 18, "C7": 11882,
+    "C8": 630, "C9": 5, "C10": 39530, "C11": 5131, "C12": 156656, "C13": 3176, "C14": 28,
+    "C15": 11043, "C16": 148913, "C17": 12, "C18": 4560, "C19": 2003, "C20": 5, "C21": 154564,
+    "C22": 18, "C23": 17, "C24": 53031, "C25": 82, "C26": 40955,
+    "I1": 44, "I2": 99, "I3": 122, "I4": 41, "I5": 220, "I6": 112, "I7": 80, "I8": 69,
+    "I9": 92, "I10": 6, "I11": 27, "I12": 37, "I13": 72
+  }
+}
