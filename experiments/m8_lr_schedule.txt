@@ -1,15 +1,8 @@
 # M8 batch 1: a fixed LR drop after epoch k (x0.1) instead of the plateau trigger, criteo_x4.
 # Motivation: BARS dropped after epoch 6 and reached 0.814037; our plateau trigger fired after
-# epochs 7-8 and gave 0.8130-0.8136. Same seeds as the CUDA baseline (2021-2023).
-configs/criteo_x4_dcnv2.toml --name lrdrop4 --seeds 2021 --set model.lr_drop_epochs=[4]
-configs/criteo_x4_dcnv2.toml --name lrdrop5 --seeds 2021 --set model.lr_drop_epochs=[5]
-configs/criteo_x4_dcnv2.toml --name lrdrop6 --seeds 2021 --set model.lr_drop_epochs=[6]
-configs/criteo_x4_dcnv2.toml --name lrdrop7 --seeds 2021 --set model.lr_drop_epochs=[7]
+# epochs 7-8 and gave 0.8130-0.8136. Ablations use one seed: 2022, the best validation AUC of the
+# 5-seed baseline (0.813577; test 0.813972, best epoch 8 of 10).
 configs/criteo_x4_dcnv2.toml --name lrdrop4 --seeds 2022 --set model.lr_drop_epochs=[4]
 configs/criteo_x4_dcnv2.toml --name lrdrop5 --seeds 2022 --set model.lr_drop_epochs=[5]
 configs/criteo_x4_dcnv2.toml --name lrdrop6 --seeds 2022 --set model.lr_drop_epochs=[6]
 configs/criteo_x4_dcnv2.toml --name lrdrop7 --seeds 2022 --set model.lr_drop_epochs=[7]
-configs/criteo_x4_dcnv2.toml --name lrdrop4 --seeds 2023 --set model.lr_drop_epochs=[4]
-configs/criteo_x4_dcnv2.toml --name lrdrop5 --seeds 2023 --set model.lr_drop_epochs=[5]
-configs/criteo_x4_dcnv2.toml --name lrdrop6 --seeds 2023 --set model.lr_drop_epochs=[6]
-configs/criteo_x4_dcnv2.toml --name lrdrop7 --seeds 2023 --set model.lr_drop_epochs=[7]

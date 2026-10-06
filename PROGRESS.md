@@ -85,7 +85,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - [ ] **M8 Ablations:** study and ablate DCN variants and tricks, one at a time against the M5
   baseline: low-rank mixture / MoE (the `CrossNetMix` module exists from M1; scikit-rank also has
   top-k MoE), gated cross layers, inner cross layers, other cross variants (e.g. scikit-rank's
-  MLDCN layer), and other tricks found while reading. Each needs ONNX exportability checked.
+  MLDCN layer), and other tricks found while reading. Decided (user): ablations run on a single seed,
+  2022 (best validation AUC of the baseline 5 seeds: 0.813577, test 0.813972), and need no ONNX check;
+  single-seed differences below ~0.0003 AUC are within seed noise.
 - [ ] **M9 Compare with ScalarLens:** arXiv 2609.29182 (numerical embeddings for CTR). Read the
   paper first; then compare against our M5/M7 numerics (standardize / bucketize / PLE) under the
   same protocol, if it can be exported to ONNX. "Beat the leaderboard" scope stays open.
@@ -356,3 +358,5 @@ preprocessing set and training are built. Each milestone ends with its verificat
   GPU 50%). Restarted M8 batch 1 with PARALLEL=1. Rule: one criteo job at a time per pod unless the
   host has many more vCPUs. Also: variants that share a seed are identical until the first LR drop, so
   `lrdrop4..7` duplicate epochs 1-4 (checkpoint/resume would avoid it).
+- 2026-10-06: M8 batch 1 reduced to seed 2022 only (4 jobs: LR drop after epoch 4/5/6/7); M7 batch 1 also on
+  seed 2022. Pod restarted on the new queue.
