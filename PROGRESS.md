@@ -65,7 +65,10 @@ preprocessing set and training are built. Each milestone ends with its verificat
   0.8130 / 0.8135 / 0.8130 (seeds 2019 / 2020 / 2021) vs BARS 0.814037; best test AUC 0.813938 vs
   0.814514. Training dynamics match BARS epoch by epoch for epochs 1-6 (train loss within 1e-4); the
   gap tracks when the plateau-triggered LR drop happens (BARS dropped after epoch 6, ours after
-  7-8). Seeds 2022-2023 still running on RunPod for the 5-seed mean.
+  7-8). 5 seeds (2019-2020 on MPS, 2021-2023 on RTX 4090), test AUC / LogLoss: 0.813424 / 0.438965,
+  0.813938 / 0.438281, 0.813351 / 0.439072, 0.813972 / 0.438288, 0.813479 / 0.438886; mean test AUC
+  0.813633 (BARS 0.814514, gap 0.00088), mean LogLoss 0.438698 (BARS 0.437631); mean valid AUC
+  0.813231 (BARS 0.814037). Best epoch 8-9 in the CUDA seeds, i.e. the late LR drop again.
 - [x] **M5b ONNX for the real pipeline:** both BARS pipelines (criteo: bucketizer -> integer and
   string encoders -> estimator; avazu: time features -> encoder -> estimator with `cat_columns`)
   convert through skl2onnx custom parsers/converters and match `predict_proba` within 1e-5 on real
@@ -329,4 +332,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
   --parallel K` (runs a file of jobs concurrently, echoes only epoch/RESULT lines, full logs in
   runs/logs/), `scripts/pod_run.sh` (pod entrypoint: install, data, queue). Batch 1
   (`experiments/m8_lr_schedule.txt`): LR drop after epoch 4/5/6/7 on criteo, seeds 2021-2023.
-
+- 2026-10-06: criteo seeds 2021-2023 finished on the RunPod 4090 (~21 min fit each, plus ~5 min CPU
+  test prediction). The same pod was re-pointed (update-pod + restart) at the M8 batch 1 queue,
+  PARALLEL=4.
