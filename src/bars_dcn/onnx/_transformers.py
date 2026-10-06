@@ -12,20 +12,20 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from onnx import TensorProto
-from skl2onnx.common.data_types import DoubleTensorType, Int64TensorType, StringTensorType
 
-from bars_dcn.onnx._builder import ML_DOMAIN, Builder, DType, dtype_of
+from bars_dcn.onnx._builder import ML_DOMAIN, TENSOR_TYPES, Builder, DType, dtype_of
 from bars_dcn.preprocessing import (
     OOV_INDEX,
     AvazuTimeFeatures,
     LogSquaredBucketizer,
     OrdinalEncoder,
+    PiecewiseLinearEncoder,
+    ple_name,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-TENSOR_TYPES = {"string": StringTensorType, "double": DoubleTensorType, "int64": Int64TensorType}
 LABEL_ENCODER_VERSION = 2
 # Sakamoto's day-of-week table: (y + y/4 - y/100 + y/400 + T[m-1] + d) % 7 with Sunday = 0
 _WEEKDAY_TABLE = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
@@ -95,6 +95,38 @@ def _emit_ordinal(graph: Builder, frame: Frame, step: OrdinalEncoder) -> Frame:
     return out
 
 
+def _ple_outputs(step: PiecewiseLinearEncoder) -> dict[str, DType]:
+    return {
+        ple_name(column, k): "float"
+        for column, bins in zip(step.columns_, step.n_bins_, strict=True)
+        for k in range(bins)
+    }
+
+
+def _emit_ple(graph: Builder, frame: Frame, step: PiecewiseLinearEncoder) -> Frame:
+    """Bins ``clip((x - lo) / (hi - lo), 0, 1)`` in float64 (NaN -> ``fill_value``) as float32.
+
+    One vectorized ``Sub/Div/Clip`` per column over all its bins, then ``Split`` into the
+    ``(batch, 1)`` columns of the frame.
+    """
+    fill = graph.constant(step.fill_value, np.float64)
+    zero, one = graph.constant(0.0, np.float64), graph.constant(1.0, np.float64)
+    out: Frame = {}
+    for column, edges in zip(step.columns_, step.edges_, strict=True):
+        bins = len(edges) - 1
+        if bins < 1:
+            continue
+        value = _need(frame, column, "double", "PiecewiseLinearEncoder")
+        value = graph.op("Where", [graph.op("IsNaN", [value]), fill, value])
+        lower = graph.constant(edges[:-1][None, :], np.float64)
+        width = graph.constant((edges[1:] - edges[:-1])[None, :], np.float64)
+        ratio = graph.op("Div", [graph.op("Sub", [value, lower]), width])
+        bounded = graph.op("Cast", [graph.op("Clip", [ratio, zero, one])], to=TensorProto.FLOAT)
+        parts = graph.ops("Split", [bounded], bins, axis=1, num_outputs=bins)
+        out.update({ple_name(column, k): Column(part, "float") for k, part in enumerate(parts)})
+    return out
+
+
 def _avazu_outputs(step: AvazuTimeFeatures) -> dict[str, DType]:
     return {step.column: "string", "weekday": "string", "weekend": "string"}
 
@@ -160,6 +192,7 @@ SPECS: dict[type, Spec] = {
         "BarsDcnLogSquaredBucketizer", _bucketizer_outputs, _emit_bucketizer
     ),
     OrdinalEncoder: Spec("BarsDcnOrdinalEncoder", _ordinal_outputs, _emit_ordinal),
+    PiecewiseLinearEncoder: Spec("BarsDcnPiecewiseLinearEncoder", _ple_outputs, _emit_ple),
     AvazuTimeFeatures: Spec("BarsDcnAvazuTimeFeatures", _avazu_outputs, _emit_avazu_time),
 }
 

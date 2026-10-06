@@ -338,3 +338,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - 2026-10-06: M7 step 1 (float numeric block: `DCNClassifier(num_columns=...)`, batches/training carry
   a numeric tensor) and step 2 (`PiecewiseLinearEncoder`: quantile edges, de-duplicated, additive
   `{col}_ple{k}` float32 columns, missing filled before encoding) done; ONNX for both is step 3.
+- 2026-10-06: M7 step 3 done: ONNX for `PiecewiseLinearEncoder` (float64 Sub/Div/Clip per column, Split
+  into `(batch,1)` float32 columns, bin values exactly equal to polars) and for estimators with a numeric
+  block (graph inputs `x_cat` int64 + `x_num` float32, both with a dynamic batch). Pipeline parity
+  on the criteo sample incl. missing numerics. Next: multihash (step 4).

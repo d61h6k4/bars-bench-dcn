@@ -19,18 +19,25 @@ if TYPE_CHECKING:
 ONNX_OPSET = 18
 
 
-def export_logit_graph(module: torch.nn.Module, n_fields: int) -> onnx.ModelProto:
-    """Export ``x_cat (n, n_fields) int64 -> logit (n,)`` with a dynamic batch dimension."""
+def export_logit_graph(
+    module: torch.nn.Module, n_fields: int, n_numeric: int = 0
+) -> onnx.ModelProto:
+    """Export ``x_cat (n, n_fields) int64 [, x_num (n, n_numeric) float32] -> logit (n,)``."""
     module = copy.deepcopy(module).cpu().eval()
-    example = torch.zeros(2, n_fields, dtype=torch.int64)
+    batch = Dim("batch", min=1)
+    example = [torch.zeros(2, n_fields, dtype=torch.int64)]
+    names = ["x_cat"]
+    if n_numeric:
+        example.append(torch.zeros(2, n_numeric, dtype=torch.float32))
+        names.append("x_num")
     program = torch.onnx.export(
         module,
-        (example,),
+        tuple(example),
         dynamo=True,
         opset_version=ONNX_OPSET,
-        input_names=["x_cat"],
+        input_names=names,
         output_names=["logit"],
-        dynamic_shapes={"x_cat": {0: Dim("batch", min=1)}},
+        dynamic_shapes={name: {0: batch} for name in names},
         report=False,
         verbose=False,
     )
@@ -47,9 +54,9 @@ def shape_calculator(operator) -> None:  # noqa: ANN001
     operator.outputs[1].type = FloatTensorType([batch, 2])
 
 
-def _inline(scope, container, graph: onnx.GraphProto, input_name: str) -> str:  # noqa: ANN001
-    """Copy ``graph`` into the container; return the renamed single output."""
-    names = {graph.input[0].name: input_name}
+def _inline(scope, container, graph: onnx.GraphProto, input_names: list[str]) -> str:  # noqa: ANN001
+    """Copy ``graph`` into the container, its inputs bound in order; return the renamed output."""
+    names = {i.name: name for i, name in zip(graph.input, input_names, strict=True)}
     for init in graph.initializer:
         names[init.name] = scope.get_unique_variable_name(init.name)
         container.add_initializer(names[init.name], init.data_type, list(init.dims), init)
@@ -79,26 +86,35 @@ def converter(scope, operator, container) -> None:  # noqa: ANN001
 
     # the model's fields, in fit order, from the frame the previous steps produced
     frame = {variable.raw_name: variable for variable in operator.inputs}
-    fields = [str(name) for name in estimator.feature_names_in_]
-    missing = [name for name in fields if name not in frame]
-    if missing:
-        msg = f"the estimator needs columns {missing}, which are not available at this step"
-        raise ValueError(msg)
-    not_encoded = [name for name in fields if not isinstance(frame[name].type, Int64TensorType)]
-    if not_encoded:
-        msg = f"columns {not_encoded} reach the estimator without being encoded to integer indices"
-        raise ValueError(msg)
-    block = scope.get_unique_variable_name("x_cat")
-    container.add_node(
-        "Concat",
-        [frame[name].full_name for name in fields],
-        block,
-        name=scope.get_unique_operator_name("Concat"),
-        axis=1,
-    )
 
-    graph = export_logit_graph(estimator.model_, estimator.n_features_in_).graph
-    logit = _inline(scope, container, graph, block)
+    def block(names: object, kind: type, label: str, prefix: str) -> str:
+        names = [str(name) for name in names]  # ty: ignore[not-iterable]
+        missing = [name for name in names if name not in frame]
+        if missing:
+            msg = f"the estimator needs columns {missing}, which are not available at this step"
+            raise ValueError(msg)
+        wrong = [name for name in names if not isinstance(frame[name].type, kind)]
+        if wrong:
+            msg = f"columns {wrong} reach the estimator without being encoded to {label}"
+            raise ValueError(msg)
+        out = scope.get_unique_variable_name(prefix)
+        container.add_node(
+            "Concat",
+            [frame[name].full_name for name in names],
+            out,
+            name=scope.get_unique_operator_name("Concat"),
+            axis=1,
+        )
+        return out
+
+    inputs = [block(estimator.feature_names_in_, Int64TensorType, "integer indices", "x_cat")]
+    if estimator.n_numeric_in_:
+        inputs.append(block(estimator.numeric_names_in_, FloatTensorType, "float32", "x_num"))
+
+    graph = export_logit_graph(
+        estimator.model_, estimator.n_features_in_, estimator.n_numeric_in_
+    ).graph
+    logit = _inline(scope, container, graph, inputs)
 
     def name(prefix: str) -> str:
         return scope.get_unique_variable_name(prefix)

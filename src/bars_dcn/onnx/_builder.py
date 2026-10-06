@@ -6,13 +6,19 @@ import numpy as np
 from onnx import helper
 from skl2onnx.common.data_types import (
     DoubleTensorType,
+    FloatTensorType,
     Int64TensorType,
     StringTensorType,
 )
 
-DType = Literal["string", "double", "int64"]
+DType = Literal["string", "double", "float", "int64"]
 ML_DOMAIN = "ai.onnx.ml"
-TENSOR_TYPES = {"string": StringTensorType, "double": DoubleTensorType, "int64": Int64TensorType}
+TENSOR_TYPES = {
+    "string": StringTensorType,
+    "double": DoubleTensorType,
+    "float": FloatTensorType,
+    "int64": Int64TensorType,
+}
 
 
 def dtype_of(variable) -> DType:  # noqa: ANN001
@@ -60,3 +66,15 @@ class Builder:
             **attrs,
         )
         return output
+
+    def ops(self, op_type: str, inputs: list[str], n_outputs: int, **attrs: object) -> list[str]:
+        """Add a node with ``n_outputs`` outputs; return their names."""
+        outputs = [self.scope.get_unique_variable_name(op_type.lower()) for _ in range(n_outputs)]
+        self.container.add_node(
+            op_type,
+            inputs,
+            outputs,
+            name=self.scope.get_unique_operator_name(op_type),
+            **attrs,
+        )
+        return outputs
