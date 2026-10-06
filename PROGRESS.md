@@ -70,8 +70,8 @@ preprocessing set and training are built. Each milestone ends with its verificat
   parsers (as in M2) or a small walker over our closed transformer set merged with the exported
   model graph. Verify: onnxruntime parity with the sklearn pipeline (1e-5) on real rows incl.
   nulls and unseen values, and a latency check. Production = ONNX, so this is not optional.
-- [ ] **M6 avazu_x4:** data downloaded and MD5-verified, preprocessing and parameter count match BARS
-  (73,385,345), config and runner done; parity run pending.
+- [x] **M6 avazu_x4:** data MD5-verified, parameter count equals BARS (73,385,345), parity run
+  done (seed 2019): test AUC 0.792953 vs BARS 0.793146 (-0.00019), LogLoss 0.371977 vs 0.371865.
 - [ ] **M7 PLE + Multihash:** piecewise-linear (PLE) numeric encoding and multihash /
   unified categorical embeddings as preprocessing transformations, each with its ONNX converter,
   evaluated with the same protocol as M5. Design question to settle first: PLE needs fitted bin
@@ -304,4 +304,8 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - 2026-10-06: RunPod lessons: pin allowedCudaVersions (torch 2.14 ships CUDA 13 libs; a CUDA 12.8
   host fails with "driver too old"), make the start script fail-fast and non-restarting, and note
   that PyPI download speed varies hugely by host (18m41s vs 40s for the same 75 packages).
+- 2026-10-06: M6 avazu_x4 parity, seed 2019 on MPS (BARS used one seed too): valid 0.792867 /
+  0.372029, test 0.792953 / 0.371977 vs BARS valid 0.792978 / 0.371967, test 0.793146 / 0.371865.
+  Epoch curve tracks BARS (0.7929, 0.7886, 0.7758 vs 0.7930, 0.7886, 0.7761), best epoch 1,
+  stopped at epoch 3 like BARS. Parity holds within ~2e-4 AUC.
 
