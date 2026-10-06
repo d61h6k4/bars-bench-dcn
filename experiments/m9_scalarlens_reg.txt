@@ -1,0 +1,7 @@
+# M9: regularized ScalarLens (quantile-initialized boundaries), criteo_x4, seed 2022, plateau LR rule: same as `scalarlens_q`
+# (valid 0.813257, test 0.813533, LL 0.439017, best epoch 8; it overfit: train loss 0.419 vs val LogLoss 0.4436 at epoch 10).
+# Baseline: valid 0.813577, test 0.813972, LL 0.438288. One regularizer per job.
+# L2 on the ScalarLens parameters (not the boundary logits); the categorical table keeps its own 1e-5.
+configs/criteo_x4_dcnv2.toml --name scalarlens_q_l2 --seeds 2022 --set 'preprocessing.numeric="scalarlens"' --set 'preprocessing.scalarlens_init="quantile"' --set model.scalarlens_regularizer=1e-4
+# whole numeric tokens dropped with p=0.1 while training (scikit-rank's PLE feature_dropout)
+configs/criteo_x4_dcnv2.toml --name scalarlens_q_drop --seeds 2022 --set 'preprocessing.numeric="scalarlens"' --set 'preprocessing.scalarlens_init="quantile"' --set model.scalarlens_dropout=0.1

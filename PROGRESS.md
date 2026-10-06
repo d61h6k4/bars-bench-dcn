@@ -432,5 +432,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   log-squared buckets under the BARS recipe on this seed; results are confounded by the plateau rule's LR-drop timing
   (+-0.001), a fixed-schedule comparison was not run (user declined). `multihash1m` epoch 5 val AUC 0.811281 (baseline
   0.811634).
-- 2026-10-06 (night plan, revised by the user): the 5-seed protocol is NOT needed (`experiments/m8_5seed.txt` removed).
-  When the M7+M9 queue ends (~22:35 UTC), record its results, then delete the pod (it bills $0.74/h) and leave a summary.
+- 2026-10-06 (night plan, final): no 5-seed run (user). The user asked for one more experiment: ScalarLens with quantile
+  boundaries plus regularization. Added `scalarlens_regularizer` (L2 on the ScalarLens parameters except the boundary
+  logits, applied like the embedding L2; logged train loss includes the penalty, ~0.04 at 1e-4) and `scalarlens_dropout`
+  (whole numeric tokens dropped while training). Queue `experiments/m9_scalarlens_reg.txt`: `scalarlens_q_l2` (1e-4) and
+  `scalarlens_q_drop` (0.1), seed 2022, plateau rule, to run on the same pod right after the M7+M9 queue (~22:35 UTC), then
+  record the results and DELETE the pod (deadline 02:30 UTC).

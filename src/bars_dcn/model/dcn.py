@@ -19,14 +19,14 @@ _EMBEDDING_STD = 1e-4
 
 
 def _numeric_embedding(
-    num_features: int, n_fields: int, embedding_dim: int, scalarlens: bool
+    num_features: int, n_fields: int, embedding_dim: int, scalarlens: bool, dropout: float
 ) -> ScalarLens | None:
     if not scalarlens:
         return None
     if not num_features:
         msg = "scalarlens needs a numeric block (num_features > 0)"
         raise ValueError(msg)
-    return ScalarLens(num_features, n_fields, embedding_dim)
+    return ScalarLens(num_features, n_fields, embedding_dim, token_dropout=dropout)
 
 
 class DCNv2(nn.Module):
@@ -66,6 +66,7 @@ class DCNv2(nn.Module):
         dropout: float = 0.0,
         shared_embedding: bool = False,
         scalarlens: bool = False,
+        scalarlens_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         if structure not in _STRUCTURES:
@@ -82,7 +83,7 @@ class DCNv2(nn.Module):
         self.register_buffer("offsets", torch.tensor(offsets), persistent=False)
         n_fields = len(cat_cardinalities)
         self.numeric_embedding = _numeric_embedding(
-            num_features, n_fields, embedding_dim, scalarlens
+            num_features, n_fields, embedding_dim, scalarlens, scalarlens_dropout
         )
         numeric_dim = num_features * embedding_dim if scalarlens else num_features
         dim = n_fields * embedding_dim + numeric_dim

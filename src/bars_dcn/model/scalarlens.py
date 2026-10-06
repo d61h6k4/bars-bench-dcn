@@ -21,7 +21,8 @@ class ScalarLens(nn.Module):
     ``set_ranges`` must be called with the training ``[low, high]`` of every field before use;
     inputs outside the range are clipped to it. Defaults are the paper's frozen ones
     (``K=16, T=3, r=16, m=8``, head width 32); ``temperature`` and ``norm_eps`` are not specified
-    there and are assumed.
+    there and are assumed. ``token_dropout`` zeroes a whole numeric token with that probability
+    while training (the survivors are rescaled), as scikit-rank's PLE ``feature_dropout``.
     """
 
     low: Tensor
@@ -41,6 +42,7 @@ class ScalarLens(nn.Module):
         min_width: float = 1e-4,
         temperature: float = 1.0,
         norm_eps: float = 1e-6,
+        token_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         if intervals < 1:
@@ -50,6 +52,7 @@ class ScalarLens(nn.Module):
         self.n_numeric, self.dim, self.intervals = n_numeric, dim, intervals
         self.steps, self.state = steps, state
         self.min_width, self.temperature, self.norm_eps = min_width, temperature, norm_eps
+        self.token_dropout = token_dropout
         self.register_buffer("low", torch.zeros(n_numeric))
         self.register_buffer("high", torch.ones(n_numeric))
         self.width_logits = nn.Parameter(torch.zeros(n_numeric, intervals))
@@ -135,4 +138,8 @@ class ScalarLens(nn.Module):
         out = torch.stack(
             [head(features[:, i]) for i, head in enumerate(self.readout)], dim=1
         )  # (B, N, d)
-        return out * torch.nn.functional.softplus(self.gain).unsqueeze(-1)
+        out = out * torch.nn.functional.softplus(self.gain).unsqueeze(-1)
+        if self.training and self.token_dropout > 0:
+            keep = torch.rand(batch, self.n_numeric, 1, device=out.device) >= self.token_dropout
+            out = out * keep.to(out.dtype) / (1 - self.token_dropout)
+        return out

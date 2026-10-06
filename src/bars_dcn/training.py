@@ -50,6 +50,7 @@ class TrainSettings:
     device: str = "auto"
     num_workers: int = 0  # DataLoader worker processes gathering batches ahead of the step
     prefetch_factor: int = 2  # batches each worker keeps ready (only with num_workers > 0)
+    scalarlens_regularizer: float = 0.0  # L2 on the ScalarLens parameters (not its boundary logits)
     lr_drop_epochs: tuple[int, ...] | None = None  # fixed schedule: scale the LR after these epochs
     log_every_steps: int = 500  # progress line (loss, steps/s) every this many steps; 0 disables
     log_dir: str | None = None
@@ -113,6 +114,19 @@ def embedding_penalty(model: DCNv2, regularizer: float) -> torch.Tensor:
     return 0.5 * regularizer * model.embedding.weight.pow(2).sum()
 
 
+def scalarlens_penalty(model: DCNv2, regularizer: float) -> torch.Tensor:
+    """``(lambda / 2) * ||theta||^2`` over the ScalarLens parameters, except the boundary logits.
+
+    The logits are left out: pulling them to zero would pull the intervals back to equal widths,
+    undoing a quantile initialization.
+    """
+    lens = model.numeric_embedding
+    if lens is None:
+        return torch.zeros((), device=model.embedding.weight.device)
+    squares = [p.pow(2).sum() for name, p in lens.named_parameters() if name != "width_logits"]
+    return 0.5 * regularizer * torch.stack(squares).sum()
+
+
 def make_accelerator(device: str) -> Accelerator:
     """Return a fresh ``Accelerator``; ``"auto"`` lets accelerate pick, ``"mps"`` demands MPS."""
     if device not in ("auto", "cpu", "mps"):
@@ -162,6 +176,8 @@ def _run_epoch(
         loss = functional.binary_cross_entropy_with_logits(logits, labels)
         if settings.embedding_regularizer:
             loss = loss + embedding_penalty(model, settings.embedding_regularizer)
+        if settings.scalarlens_regularizer:
+            loss = loss + scalarlens_penalty(model, settings.scalarlens_regularizer)
         accelerator.backward(loss)
         accelerator.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
         optimizer.step()

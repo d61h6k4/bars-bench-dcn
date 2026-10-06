@@ -73,7 +73,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     signal-propagation plots there.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         cat_columns: Sequence[str] | None = None,
@@ -82,6 +82,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         shared_embedding: bool = False,
         scalarlens: bool = False,
         scalarlens_init: str = "uniform",
+        scalarlens_dropout: float = 0.0,
+        scalarlens_regularizer: float = 0.0,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
         use_low_rank_mixture: bool = False,
@@ -112,6 +114,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.shared_embedding = shared_embedding
         self.scalarlens = scalarlens
         self.scalarlens_init = scalarlens_init
+        self.scalarlens_dropout = scalarlens_dropout
+        self.scalarlens_regularizer = scalarlens_regularizer
         self.structure = structure
         self.num_cross_layers = num_cross_layers
         self.use_low_rank_mixture = use_low_rank_mixture
@@ -269,6 +273,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             embedding_dim=self.embedding_dim,
             shared_embedding=self.shared_embedding,
             scalarlens=self.scalarlens,
+            scalarlens_dropout=self.scalarlens_dropout,
             structure=self.structure,
             num_cross_layers=self.num_cross_layers,
             use_low_rank_mixture=self.use_low_rank_mixture,
@@ -286,6 +291,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             batch_size=self.batch_size,
             max_epochs=self.max_epochs,
             embedding_regularizer=self.embedding_regularizer,
+            scalarlens_regularizer=self.scalarlens_regularizer,
             max_grad_norm=self.max_grad_norm,
             patience=self.early_stopping_patience,
             lr_reduce_factor=self.lr_reduce_factor,

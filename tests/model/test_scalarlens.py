@@ -126,3 +126,36 @@ def test_quantile_init_puts_the_boundaries_at_the_quantiles_and_spreads_the_rows
 def test_degenerate_interval_count_is_rejected():
     with pytest.raises(ValueError, match="intervals"):
         ScalarLens(N, C, D, intervals=0)
+
+
+def test_token_dropout_zeroes_whole_tokens_in_training_only():
+    module = _module(token_dropout=0.5)
+    x = torch.rand(256, N) * 50
+    cat = torch.randn(256, C, D)
+    module.train()
+    out = module(x, cat)
+    zero = (out == 0).all(dim=-1)  # (B, N): whole token dropped
+    assert 0.3 < zero.float().mean() < 0.7
+    assert (zero | (out != 0).any(dim=-1)).all()
+    module.eval()
+    assert not (module(x, cat) == 0).all(dim=-1).any()  # no dropout at inference
+    torch.testing.assert_close(module(x, cat), module(x, cat))
+
+
+def test_the_l2_penalty_covers_scalarlens_parameters_but_not_the_boundary_logits():
+    from bars_dcn.model import DCNv2  # noqa: PLC0415
+    from bars_dcn.training import scalarlens_penalty  # noqa: PLC0415
+
+    model = DCNv2(
+        [4, 4], num_features=2, embedding_dim=4, parallel_hidden_units=[8], scalarlens=True
+    )
+    lens = model.numeric_embedding
+    assert lens is not None
+    expected = (
+        0.5 * 0.1 * sum(p.pow(2).sum() for n, p in lens.named_parameters() if n != "width_logits")
+    )
+    torch.testing.assert_close(scalarlens_penalty(model, 0.1), expected)
+    scalarlens_penalty(model, 0.1).backward()
+    assert lens.width_logits.grad is None
+    plain = DCNv2([4, 4], embedding_dim=4, parallel_hidden_units=[8])
+    assert scalarlens_penalty(plain, 0.1) == 0
