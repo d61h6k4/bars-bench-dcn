@@ -2,9 +2,9 @@
 # (baseline: valid 0.813577, test 0.813972, LogLoss 0.438288). One job at a time per pod (CPU-bound).
 # ScalarLens with the paper's equal-width initial intervals, and with quantile-initialized (learnable) boundaries:
 # on criteo >99.9% of the rows of 11 of 13 numeric fields fall into the first equal-width interval.
-configs/criteo_x4_dcnv2.toml --name scalarlens_q --seeds 2022 --set preprocessing.numeric="scalarlens" --set preprocessing.scalarlens_init="quantile"
-configs/criteo_x4_dcnv2.toml --name scalarlens --seeds 2022 --set preprocessing.numeric="scalarlens"
-configs/criteo_x4_dcnv2.toml --name multihash1m --seeds 2022 --set preprocessing.categorical="multihash" --set preprocessing.multihash_n_hashes=2 --set preprocessing.multihash_cardinality=1000000 --set model.embedding_dim=8
+configs/criteo_x4_dcnv2.toml --name scalarlens_q --seeds 2022 --set 'preprocessing.numeric="scalarlens"' --set 'preprocessing.scalarlens_init="quantile"'
+configs/criteo_x4_dcnv2.toml --name scalarlens --seeds 2022 --set 'preprocessing.numeric="scalarlens"'
+configs/criteo_x4_dcnv2.toml --name multihash1m --seeds 2022 --set 'preprocessing.categorical="multihash"' --set preprocessing.multihash_n_hashes=2 --set preprocessing.multihash_cardinality=1000000 --set model.embedding_dim=8
 # classic untrained PLE: raw bins as the numeric block (alone, and next to the bucketized embeddings)
-configs/criteo_x4_dcnv2.toml --name ple16 --seeds 2022 --set preprocessing.numeric="ple" --set preprocessing.ple_bins=16
-configs/criteo_x4_dcnv2.toml --name both16 --seeds 2022 --set preprocessing.numeric="both" --set preprocessing.ple_bins=16
+configs/criteo_x4_dcnv2.toml --name ple16 --seeds 2022 --set 'preprocessing.numeric="ple"' --set preprocessing.ple_bins=16
+configs/criteo_x4_dcnv2.toml --name both16 --seeds 2022 --set 'preprocessing.numeric="both"' --set preprocessing.ple_bins=16

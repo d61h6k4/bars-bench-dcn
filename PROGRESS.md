@@ -413,3 +413,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
   reproducibility check across two pods. Earlier drop = better, monotonically (0.814925 > 0.814787 > 0.814466 >
   0.813972); drop after epoch 6 (BARS's own timing) reaches 0.814466 vs BARS 0.814514. The pod then ran
   idle 18:55-19:02 UTC before being pointed at `experiments/m7_m9.txt` (restart ~19:02).
+- 2026-10-06: The M7/M9 queue crashed at start (19:04 UTC): `shlex.split` in the queue strips the double quotes of
+  `--set k="str"`, leaving a bare word that is not TOML. Fixed by single-quoting those `--set` values in the queue
+  files, and added `tests/bench/test_experiments.py` (every line of every experiments/*.txt must parse, apply and
+  build a pipeline). The pod idled ~21 min before the crash was seen (19:04-19:25).
