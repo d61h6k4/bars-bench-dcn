@@ -60,10 +60,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   numerics enter the model, M7).
 - [x] **M4 Estimator + training:** `DCNClassifier`, Accelerate loop on MPS, early stopping,
   `fit_pipeline`. Verify: e2e on the sample (AUC floor, ONNX parity of the trained pipeline).
-- [ ] **M5 Bench runner, parity:** record the BARS DCNv2 reference config and numbers for
-  `criteo_x4` (fetch from BARS; do not guess), implement the runner (YAML config, MD5 check,
-  metrics.json per seed), run 5 seeds. Verify: test AUC/LogLoss within seed noise of BARS.
-  Watch: memory with the 36.7M-row split and MPS throughput.
+- [x] **M5 Bench runner, parity:** runner, configs, MD5 checks, per-seed metrics.json done.
+  Accepted by the user to proceed with: close to BARS, not matched or beaten. criteo_x4 valid AUC
+  0.8130 / 0.8135 / 0.8130 (seeds 2019 / 2020 / 2021) vs BARS 0.814037; best test AUC 0.813938 vs
+  0.814514. Training dynamics match BARS epoch by epoch for epochs 1-6 (train loss within 1e-4); the
+  gap tracks when the plateau-triggered LR drop happens (BARS dropped after epoch 6, ours after
+  7-8). Seeds 2022-2023 still running on RunPod for the 5-seed mean.
 - [ ] **M5b ONNX for the real pipeline:** convert the passthrough pipeline (bucketizer, integer
   and string ordinal encoders, column selection, estimator) into one graph that takes raw inputs
   and returns probabilities. Approach to decide then: skl2onnx converters with multi-output
@@ -89,7 +91,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
 
 ## Next actions
 
-- [ ] M5: bench runner and parity run on full criteo_x4 (~8-10 min/epoch on MPS)
+- [ ] M5b: ONNX for the real passthrough pipeline (next)
+- [ ] Add an AUC-minus-logloss monitor option (BARS avazu monitors `{AUC: 1, logloss: -1}`)
+- [ ] M8: fixed-epoch LR schedule vs plateau trigger (the criteo gap tracks LR-drop timing)
 - [ ] Download `avazu_x4` (need link + reference MD5s)
 
 ## Open questions
@@ -308,4 +312,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   0.372029, test 0.792953 / 0.371977 vs BARS valid 0.792978 / 0.371967, test 0.793146 / 0.371865.
   Epoch curve tracks BARS (0.7929, 0.7886, 0.7758 vs 0.7930, 0.7886, 0.7761), best epoch 1,
   stopped at epoch 3 like BARS. Parity holds within ~2e-4 AUC.
+- 2026-10-06: criteo seed 2021 on RunPod RTX 4090 (CUDA 13.0, 64 vCPU host): 33 steps/s, ~2 min/epoch,
+  ~21 min per seed incl. 35 s of data prep; best epoch 9, valid AUC 0.812991. Train loss per epoch
+  vs the BARS log: 0.4590/0.4514/0.4498/0.4485/0.4476/0.4468 (BARS) vs 0.4594/0.4516/0.4499/0.4486/
+  0.4476/0.4467 (ours). BARS avazu monitors AUC minus logloss; ours monitors AUC only (no effect
+  there, best epoch was 1 either way). Do not claim better-than-BARS: the best seed is 0.0005 below.
 
