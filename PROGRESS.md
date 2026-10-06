@@ -417,3 +417,11 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `--set k="str"`, leaving a bare word that is not TOML. Fixed by single-quoting those `--set` values in the queue
   files, and added `tests/bench/test_experiments.py` (every line of every experiments/*.txt must parse, apply and
   build a pipeline). The pod idled ~21 min before the crash was seen (19:04-19:25).
+- 2026-10-06: M9 first result, `scalarlens_q` (ScalarLens, quantile-initialized boundaries; seed 2022; plateau LR rule;
+  raw numerics, missing -> 0): valid 0.813257, test 0.813533, test LogLoss 0.439017, best epoch 8 of 10, 20,417,425
+  parameters (+35k), ~3.3 min/epoch (baseline ~2). Baseline seed 2022: 0.813577 / 0.813972 / 0.438288 -> -0.00044
+  test AUC, +0.00073 LogLoss; BARS 0.814514 -> -0.00098. Val AUC was ahead of the baseline in epochs 1-7 (+0.0023 at
+  epoch 1, shrinking to +0.0008 at epoch 7) and fell behind after the LR drop; train loss falls much faster than
+  baseline (0.419 vs 0.4275 at epoch 10) while val LogLoss rises (0.4436): overfits, nothing regularizes it (L2 only
+  on the categorical table). Not yet tested: ScalarLens with the epoch-4 fixed LR drop (it peaks early), or with
+  regularization. `scalarlens` (uniform init) epoch 1: val AUC 0.804772 (baseline 0.806365, quantile 0.808703).
