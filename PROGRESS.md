@@ -384,3 +384,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   numeric columns (cast to float32 like at fit), bench `preprocessing.numeric = "scalarlens"`. ONNX parity
   of a full pipeline with missing and far-out-of-range numerics. Step 4 (the run) is queued in
   `experiments/m9_scalarlens.txt`, after M8 and M7 on the pod.
+- 2026-10-06: M8 batch 1, first result (seed 2022, LR x0.1 after epoch 4, `lrdrop4`): valid AUC 0.814606,
+  test AUC 0.814925, test LogLoss 0.437186, best epoch 6 of 8 (baseline seed 2022: 0.813577 / 0.813972 /
+  0.438288; BARS: 0.814037 / 0.814514 / 0.437631). +0.00095 test AUC vs our baseline, +0.00041 vs BARS.
+  Single seed, drop epoch chosen on validation: promising, not yet a leaderboard claim (needs the
+  5-seed protocol with the chosen schedule). Epoch time alone on the 4090: ~2 min; fit 17 min + 5 min
+  test prediction. lrdrop5-7 running.
