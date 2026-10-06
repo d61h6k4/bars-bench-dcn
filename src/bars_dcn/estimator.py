@@ -1,6 +1,6 @@
 """sklearn estimator around the DCNv2 torch module."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Self
 
 import numpy as np
@@ -48,7 +48,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
 
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
-    The numerics must be finite (impute first).
+    It may also be a function of the frame's column names (resolved at ``fit``), for encoders that
+    decide their own output columns. The numerics must be finite (impute first).
 
     Input contract (enforced): integer dtype, non-negative, and at predict time below the
     per-field cardinality seen in ``fit`` (a larger index would silently read another field's
@@ -70,7 +71,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self,
         *,
         cat_columns: Sequence[str] | None = None,
-        num_columns: Sequence[str] | None = None,
+        num_columns: Sequence[str] | Callable[[list[str]], list[str]] | None = None,
         embedding_dim: int = 16,
         shared_embedding: bool = False,
         structure: Structure = "parallel",
@@ -149,21 +150,31 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(msg)
         return index
 
-    def _numeric_block(self, X: Frame) -> np.ndarray:
-        """Return the numeric columns as an ``(n, K)`` float32 array (``K = 0`` without any)."""
+    def _numeric_names(self, X: Frame) -> list[str] | None:
+        """Resolve ``num_columns`` against the frame's columns (``None`` if there is no block)."""
         if self.num_columns is None:
-            return np.empty((_n_rows(X), 0), dtype=np.float32)
+            return None
         if not isinstance(X, pl.DataFrame | pl.LazyFrame):
             msg = "num_columns requires a polars DataFrame or LazyFrame"
             raise TypeError(msg)
-        numeric = to_index_array(X.select(self.num_columns).cast(pl.Float32)).astype(np.float32)
+        if isinstance(self.num_columns, Sequence):
+            return [str(name) for name in self.num_columns]
+        return list(self.num_columns(X.lazy().collect_schema().names()))
+
+    def _numeric_block(self, X: Frame, names: list[str] | None) -> np.ndarray:
+        """Return the numeric columns as an ``(n, K)`` float32 array (``K = 0`` without any)."""
+        if names is None:
+            return np.empty((_n_rows(X), 0), dtype=np.float32)
+        assert isinstance(X, pl.DataFrame | pl.LazyFrame)  # noqa: S101
+        numeric = to_index_array(X.select(names).cast(pl.Float32)).astype(np.float32)
         if not np.isfinite(numeric).all():
             msg = "numeric columns must be finite (no null, NaN or inf): impute them first"
             raise ValueError(msg)
         return numeric
 
     def _checked_numeric(self, X: Frame) -> np.ndarray:
-        numeric = self._numeric_block(X)
+        names = list(self.numeric_names_in_) if self.n_numeric_in_ else None
+        numeric = self._numeric_block(X, names)
         if numeric.shape[1] != self.n_numeric_in_:
             msg = f"X has {numeric.shape[1]} numeric columns, expected {self.n_numeric_in_}"
             raise ValueError(msg)
@@ -196,7 +207,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             msg = "num_columns needs explicit cat_columns (the frame also holds the raw numerics)"
             raise ValueError(msg)
         index = self._index_block(X)
-        numeric = self._numeric_block(X)
+        num_names = self._numeric_names(X)
+        numeric = self._numeric_block(X, num_names)
         self.classes_ = np.unique(np.asarray(y))
         if len(self.classes_) != 2:  # noqa: PLR2004
             msg = f"only binary classification is supported, got {len(self.classes_)} classes"
@@ -207,8 +219,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(msg)
         self.n_features_in_ = index.shape[1]
         self.n_numeric_in_ = numeric.shape[1]
-        if self.num_columns is not None:
-            self.numeric_names_in_ = np.asarray(list(self.num_columns), dtype=object)
+        if num_names is not None:
+            self.numeric_names_in_ = np.asarray(num_names, dtype=object)
         if isinstance(X, pl.DataFrame | pl.LazyFrame):  # field order, needed to export to ONNX
             names = (
                 list(self.cat_columns)

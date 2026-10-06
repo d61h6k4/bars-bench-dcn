@@ -22,7 +22,15 @@ from bars_dcn.bench.data import (
 )
 from bars_dcn.estimator import DCNClassifier
 from bars_dcn.pipeline import fit_pipeline
-from bars_dcn.preprocessing import AvazuTimeFeatures, LogSquaredBucketizer, OrdinalEncoder
+from bars_dcn.preprocessing import (
+    AvazuTimeFeatures,
+    LogSquaredBucketizer,
+    MultiHashEncoder,
+    OrdinalEncoder,
+    PiecewiseLinearEncoder,
+    hash_name,
+    ple_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,28 +64,66 @@ def prepare(config: dict, data_root: Path = Path("data")) -> None:
 
 def build_pipeline(config: dict, seed: int, log_dir: Path | None = None) -> Pipeline:
     """BARS preprocessing for the configured dataset followed by the configured DCNv2."""
-    min_count = config["preprocessing"]["min_categr_count"]
+    settings = config["preprocessing"]
+    min_count = settings["min_categr_count"]
     model_params = dict(config["model"])
     name = config["dataset"]["name"]
+    steps: list = []
     if name == "criteo_x4":
-        steps = [
-            ("bucket", LogSquaredBucketizer(columns=NUMERIC)),
-            ("encode_numeric", OrdinalEncoder(columns=NUMERIC, min_count=min_count, na_values=[0])),
-            ("encode_categorical", OrdinalEncoder(columns=CATEGORICAL, min_count=min_count)),
-        ]
+        steps, fields = _criteo_steps(settings, model_params, min_count)
     elif name == "avazu_x4":
         steps = [
             ("time", AvazuTimeFeatures()),
             ("encode", OrdinalEncoder(columns=AVAZU_FIELDS, min_count=min_count)),
         ]
+        fields = list(AVAZU_FIELDS)
         model_params["cat_columns"] = AVAZU_FIELDS  # the frame still carries ``id``
     else:
         msg = f"unknown dataset {name!r}, expected one of {sorted(DATASETS)}"
         raise ValueError(msg)
+    if settings.get("categorical", "ordinal") == "multihash":
+        n_hashes = settings["multihash_n_hashes"]
+        steps.append(
+            (
+                "hash",
+                MultiHashEncoder(
+                    columns=fields, n_hashes=n_hashes, cardinality=settings["multihash_cardinality"]
+                ),
+            )
+        )
+        model_params["cat_columns"] = [hash_name(c, k) for c in fields for k in range(n_hashes)]
+        model_params["shared_embedding"] = True
     model = DCNClassifier(
         **model_params, random_state=seed, log_dir=str(log_dir) if log_dir else None
     )
     return Pipeline([*steps, ("model", model)])
+
+
+def _criteo_steps(settings: dict, model_params: dict, min_count: int) -> tuple[list, list[str]]:
+    """Criteo preprocessing steps and the encoded index fields they produce.
+
+    ``numeric``: ``bucket`` (BARS: log-squared buckets as embedded ids), ``ple`` (float
+    piecewise-linear bins as the numeric block) or ``both``.
+    """
+    numeric = settings.get("numeric", "bucket")
+    if numeric not in ("bucket", "ple", "both"):
+        msg = f"preprocessing.numeric must be bucket, ple or both, got {numeric!r}"
+        raise ValueError(msg)
+    steps: list = []
+    fields = list(CATEGORICAL)
+    if numeric in ("ple", "both"):  # before the bucketizer, which replaces the raw numerics
+        steps.append(("ple", PiecewiseLinearEncoder(columns=NUMERIC, n_bins=settings["ple_bins"])))
+        model_params["num_columns"] = ple_columns
+    if numeric in ("bucket", "both"):
+        steps += [
+            ("bucket", LogSquaredBucketizer(columns=NUMERIC)),
+            ("encode_numeric", OrdinalEncoder(columns=NUMERIC, min_count=min_count, na_values=[0])),
+        ]
+        fields = [*NUMERIC, *CATEGORICAL]
+    steps.append(("encode_categorical", OrdinalEncoder(columns=CATEGORICAL, min_count=min_count)))
+    if numeric != "bucket":  # the frame also carries columns that are not index fields
+        model_params["cat_columns"] = fields
+    return steps, fields
 
 
 def _split(dataset: Dataset, data_root: Path, name: str) -> tuple[pl.LazyFrame, np.ndarray]:

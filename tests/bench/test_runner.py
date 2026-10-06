@@ -78,6 +78,44 @@ def test_run_seed_on_the_sample_writes_metrics(tmp_path, name):
     assert on_disk["valid"]["auc"] == on_disk["history"][on_disk["best_epoch"] - 1]["val_auc"]
 
 
+@pytest.mark.parametrize(
+    "preprocessing",
+    [
+        {"numeric": "ple", "ple_bins": 4},
+        {"numeric": "both", "ple_bins": 4},
+        {"categorical": "multihash", "multihash_n_hashes": 2, "multihash_cardinality": 500},
+        {"numeric": "ple", "ple_bins": 4, "categorical": "multihash", "multihash_n_hashes": 2,
+         "multihash_cardinality": 500},
+    ],
+    ids=["ple", "both", "multihash", "ple+multihash"],
+)  # fmt: skip
+def test_criteo_numeric_and_categorical_modes_train(tmp_path, preprocessing):
+    parquet = tmp_path / "data" / "Criteo_x4" / "parquet"
+    parquet.mkdir(parents=True)
+    for split in CRITEO_X4.md5:
+        shutil.copy(ROOT / "tests" / "data" / "criteo_x4_sample" / f"{split}.parquet", parquet)
+    config = load_config(CONFIG)
+    config["model"] |= {
+        "parallel_hidden_units": [8],
+        "embedding_dim": 4,
+        "batch_size": 1024,
+        "max_epochs": 2,
+        "device": "cpu",
+    }
+    config["preprocessing"] |= {"min_categr_count": 3, **preprocessing}
+
+    metrics = run_seed(config, seed=1, out_dir=tmp_path / "runs", data_root=tmp_path / "data")
+
+    assert 0.55 < metrics["test"]["auc"] < 1
+
+
+def test_unknown_numeric_mode_is_rejected():
+    config = load_config(CONFIG)
+    config["preprocessing"]["numeric"] = "standardize"
+    with pytest.raises(ValueError, match="numeric must be"):
+        build_pipeline(config, seed=0)
+
+
 def test_unknown_dataset_is_rejected():
     config = load_config(CONFIG)
     config["dataset"]["name"] = "movielens"

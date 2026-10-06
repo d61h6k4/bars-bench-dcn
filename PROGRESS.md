@@ -346,3 +346,8 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `(a*i+b) mod M`, additive `{col}_h{k}` columns, ONNX Mul/Add/Mod), `DCNv2(shared_embedding=True)` /
   `DCNClassifier(shared_embedding=True)` (one `max(card)`-row table, no offsets). ONNX parity on a
   hashed pipeline. Next: step 5, bench config (`numeric = bucket|ple|both`, `categorical = ordinal|multihash`).
+- 2026-10-06: M7 step 5: bench config `preprocessing.numeric = bucket|ple|both` (+ `ple_bins`) and
+  `preprocessing.categorical = ordinal|multihash` (+ `multihash_n_hashes`, `multihash_cardinality`) for
+  criteo; `DCNClassifier(num_columns=...)` may be a function of the frame's column names
+  (`ple_columns`). First batch: `experiments/m7_ple_multihash.txt` (seed 2021), to run on the pod after
+  M8 batch 1. Note multihash with `embedding_dim=8` x 2 hashes keeps 16 dims per field.

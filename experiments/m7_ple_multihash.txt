@@ -1,0 +1,7 @@
+# M7 batch 1, criteo_x4, seed 2021 (compare with the CUDA baseline: test AUC 0.813351).
+# PLE as the numeric block (13 x 16 floats/row, ~30 GB at full size: keep PARALLEL <= 3 on a 500 GB host).
+configs/criteo_x4_dcnv2.toml --name ple16 --seeds 2021 --set preprocessing.numeric="ple" --set preprocessing.ple_bins=16
+# PLE bins next to the bucketized embeddings
+configs/criteo_x4_dcnv2.toml --name both16 --seeds 2021 --set preprocessing.numeric="both" --set preprocessing.ple_bins=16
+# Multihash: 2 hashes per field into one 1M-row table, 8 dims per hash (same 16 dims per field as BARS)
+configs/criteo_x4_dcnv2.toml --name multihash1m --seeds 2021 --set preprocessing.categorical="multihash" --set preprocessing.multihash_n_hashes=2 --set preprocessing.multihash_cardinality=1000000 --set model.embedding_dim=8

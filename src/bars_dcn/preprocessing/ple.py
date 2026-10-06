@@ -1,5 +1,6 @@
 """Piecewise-linear encoding of numeric columns (Gorishniy et al., 2022)."""
 
+import re
 from collections.abc import Sequence
 from itertools import pairwise
 from typing import Self, overload
@@ -13,6 +14,11 @@ from sklearn.utils import Tags
 def ple_name(column: str, k: int) -> str:
     """Name of the ``k``-th bin column of ``column``."""
     return f"{column}_ple{k}"
+
+
+def ple_columns(names: Sequence[str]) -> list[str]:
+    """Pick the bin columns out of a frame's column names (what ``num_columns`` can be)."""
+    return [name for name in names if re.search(r"_ple\d+$", name)]
 
 
 class PiecewiseLinearEncoder(TransformerMixin, BaseEstimator):
