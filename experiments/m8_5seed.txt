@@ -1,0 +1,4 @@
+# 5-seed protocol for the best schedule found so far: BARS DCNv2 criteo_x4 recipe with a fixed LR drop after epoch 4
+# (seed 2022 alone gave valid 0.814606 / test 0.814925 / LL 0.437186; it is the 5th seed, run earlier as lrdrop4).
+# Seeds 2019-2021 and 2023 as in the 5-seed plateau baseline (mean test AUC 0.813633, LL 0.438698); BARS 0.814514 / 0.437631.
+configs/criteo_x4_dcnv2.toml --name lrdrop4_seeds --seeds 2019 2020 2021 2023 --set model.lr_drop_epochs=[4]
