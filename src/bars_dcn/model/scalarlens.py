@@ -10,6 +10,7 @@ import torch
 from torch import Tensor, nn
 
 _EMBEDDING_STD = 1e-4  # as the categorical table (FuxiCTR init)
+_MIN_GAP = 1e-12  # only matters when two float32 boundaries are exactly equal
 
 
 class ScalarLens(nn.Module):
@@ -92,7 +93,8 @@ class ScalarLens(nn.Module):
         lower = (index.unsqueeze(-1) == slots).to(x.dtype)  # (B, N, K + 1) one-hot of k
         upper = (index.unsqueeze(-1) + 1 == slots).to(x.dtype)  # one-hot of k + 1
         start, end = (lower * bounds).sum(-1), (upper * bounds).sum(-1)
-        weight = ((x - start) / (end - start)).unsqueeze(-1)
+        # float32 can collapse neighbouring boundaries (|low| >> span): then x == start, weight 0
+        weight = ((x - start) / (end - start).clamp_min(_MIN_GAP)).unsqueeze(-1)
         return torch.einsum("bnk,nkd->bnd", lower, self.knots) * (
             1 - weight
         ) + weight * torch.einsum("bnk,nkd->bnd", upper, self.knots)

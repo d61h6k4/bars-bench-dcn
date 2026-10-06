@@ -99,6 +99,18 @@ def test_onnx_export_matches_torch_for_any_batch_size():
         np.testing.assert_allclose(np.asarray(got), module(x, cat).detach().numpy(), atol=1e-5)
 
 
+def test_boundaries_that_collapse_in_float32_give_finite_outputs_and_gradients():
+    module = ScalarLens(2, C, D, intervals=16)
+    module.set_ranges(
+        torch.full((2,), 5e8), torch.full((2,), 5e8)
+    )  # span 1 is below float32 spacing
+    x = torch.tensor([[5e8, 5e8 - 100], [5e8 + 100, 5e8]])
+    out = module(x, torch.randn(2, C, D))
+    out.sum().backward()
+    assert torch.isfinite(out).all()
+    assert all(torch.isfinite(p.grad).all() for p in module.parameters() if p.grad is not None)
+
+
 def test_degenerate_interval_count_is_rejected():
     with pytest.raises(ValueError, match="intervals"):
         ScalarLens(N, C, D, intervals=0)
