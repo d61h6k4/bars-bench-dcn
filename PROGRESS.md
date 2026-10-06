@@ -66,12 +66,10 @@ preprocessing set and training are built. Each milestone ends with its verificat
   0.814514. Training dynamics match BARS epoch by epoch for epochs 1-6 (train loss within 1e-4); the
   gap tracks when the plateau-triggered LR drop happens (BARS dropped after epoch 6, ours after
   7-8). Seeds 2022-2023 still running on RunPod for the 5-seed mean.
-- [ ] **M5b ONNX for the real pipeline:** convert the passthrough pipeline (bucketizer, integer
-  and string ordinal encoders, column selection, estimator) into one graph that takes raw inputs
-  and returns probabilities. Approach to decide then: skl2onnx converters with multi-output
-  parsers (as in M2) or a small walker over our closed transformer set merged with the exported
-  model graph. Verify: onnxruntime parity with the sklearn pipeline (1e-5) on real rows incl.
-  nulls and unseen values, and a latency check. Production = ONNX, so this is not optional.
+- [x] **M5b ONNX for the real pipeline:** both BARS pipelines (criteo: bucketizer -> integer and
+  string encoders -> estimator; avazu: time features -> encoder -> estimator with `cat_columns`)
+  convert through skl2onnx custom parsers/converters and match `predict_proba` within 1e-5 on real
+  and edge rows. 0.19 ms per row at BARS size.
 - [x] **M6 avazu_x4:** data MD5-verified, parameter count equals BARS (73,385,345), parity run
   done (seed 2019): test AUC 0.792953 vs BARS 0.793146 (-0.00019), LogLoss 0.371977 vs 0.371865.
 - [ ] **M7 PLE + Multihash:** piecewise-linear (PLE) numeric encoding and multihash /
@@ -91,7 +89,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
 
 ## Next actions
 
-- [ ] M5b: ONNX for the real passthrough pipeline (next)
 - [ ] Add an AUC-minus-logloss monitor option (BARS avazu monitors `{AUC: 1, logloss: -1}`)
 - [ ] M8: fixed-epoch LR schedule vs plateau trigger (the criteo gap tracks LR-drop timing)
 - [ ] Download `avazu_x4` (need link + reference MD5s)
@@ -317,4 +314,14 @@ preprocessing set and training are built. Each milestone ends with its verificat
   vs the BARS log: 0.4590/0.4514/0.4498/0.4485/0.4476/0.4468 (BARS) vs 0.4594/0.4516/0.4499/0.4486/
   0.4476/0.4467 (ours). BARS avazu monitors AUC minus logloss; ours monitors AUC only (no effect
   there, best epoch was 1 either way). Do not claim better-than-BARS: the best seed is 0.0005 below.
+- 2026-10-06: M5b done. skl2onnx kept (the point of the sklearn API): a custom parser per
+  transformer returns the frame (changed columns = new variables, the rest pass through). I first
+  started a hand-written walker instead and dropped it when the user objected. skl2onnx friction
+  points, all handled: the default parser assumes one matrix per step; the classifier shape
+  calculator asserts a single input; initial_types must list exactly the columns read (ORT requires
+  every declared input); a stand-alone step renames an input that shares its output's name.
+  ONNX has no substring op, so Avazu's hour string is parsed with Cast + integer calendar math.
+  Exact-equality checks: bucketizer vs polars over 6M integers incl. 2^31-1; weekday/hour/weekend
+  vs polars for every day 2000-2068. Removed `test_unsupported` (those cases are now supported).
+  `DCNClassifier` now records `feature_names_in_` when fitted on a polars frame.
 

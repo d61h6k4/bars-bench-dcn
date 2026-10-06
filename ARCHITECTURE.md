@@ -81,22 +81,37 @@ probability out.
 
 ### ONNX implementation
 
-ONNX conversion is a separate step that reads fitted state and emits a graph to merge with the
-model graph; it does not shape how transformers are declared. Status: the M2 converters cover
-the narrow case where the encoder's columns are exactly the graph inputs and the estimator uses
-all its inputs; they now **refuse** (NotImplementedError) integer-column encoders, passthrough
-columns and `cat_columns`. Converting the real passthrough pipeline (bucketizer, integer ordinal,
-column selection) is milestone M5b.
+ONNX conversion is a separate step that reads fitted state and emits nodes; it does not shape how
+transformers are declared. It rides on `skl2onnx`: `convert_sklearn(pipeline)` walks the plain
+sklearn `Pipeline`, and every `bars_dcn` component registers a parser and a converter.
 
-
-- `OrdinalEncoder` converts to one `LabelEncoder` (`ai.onnx.ml`) per column (vocabulary as
-  keys, indices 1..n, default 0) followed by a `Concat` into an `int64` `(n, fields)` tensor.
-- `DCNClassifier` converts by exporting its torch module with the dynamo exporter and inlining
-  the graph into the skl2onnx container, then adding `Sigmoid`, `[1 - p, p]`, `ArgMax` and a
-  `Gather` over `classes_`.
-- Serving contract: inputs are plain arrays only (no polars): one string tensor `(n, 1)` per
-  column named after it, `""` for a missing value; outputs `label` and `probabilities`. Serving
-  needs only the `.onnx` file, `onnxruntime` and numpy.
+- **Passthrough steps.** skl2onnx models a frame as one `(batch, 1)` variable per column. The
+  custom *parser* of a transformer returns the frame it produces: new variables for the columns
+  it changes or adds, the *same* variables for all others (they cost nothing and later steps can
+  still select by name). The *converter* emits nodes only for the changed columns.
+- `LogSquaredBucketizer`: `double` input (NaN = missing -> `fill_value`), `Where`/`Log`/`Mul`/
+  `Floor`/`Cast` in float64; verified exactly equal to polars for every integer up to 4M and
+  2M random integers up to 2^31-1.
+- `OrdinalEncoder`: one `LabelEncoder` (`ai.onnx.ml`) per column, string keys or int64 keys,
+  indices 1..n, default 0 (the OOV).
+- `AvazuTimeFeatures`: ONNX has no substring op, so the `YYMMDDHH` string is cast to int64 and
+  the calendar is computed with integer arithmetic (Sakamoto's weekday); verified against polars
+  for every day 2000-2068. The hour must be well-formed (not missing).
+- `DCNClassifier`: selects its fields (`feature_names_in_`, fit order) from the frame, `Concat`s
+  them into the `(n, fields)` int64 block, inlines the dynamo-exported torch graph, then adds
+  `Sigmoid`, `[1 - p, p]`, `ArgMax` and a `Gather` over `classes_`. It needs the field order, so
+  it must be fitted on a polars frame.
+- Serving contract: one input per column the pipeline reads (columns it never reads, e.g. `id`,
+  are not inputs), shape `(n, 1)`, named after the column: `string` with `""` for missing,
+  `double` with NaN for missing. Outputs `label` (int64) and `probabilities` (float32, `(n, 2)`).
+  Serving needs only the `.onnx` file, `onnxruntime` and numpy. Both BARS pipelines are tested
+  end to end against `predict_proba` (1e-5) on real and edge rows (nulls, zeros, negatives,
+  unseen tokens, int32 max).
+- A stand-alone step whose output column has its input's name gets that input renamed by
+  skl2onnx (`hour1`); this cannot happen in a full pipeline, whose outputs are `label` and
+  `probabilities`.
+- Latency (BARS-size network, whole criteo pipeline, onnxruntime CPU on the M2 Max): 0.19 ms for
+  one row, 0.63 ms for 16, 6.4 ms for 256; the graph has 175 nodes.
 - Opset 18 for the main domain, `ai.onnx.ml` 3.
 
 ## sklearn component contract
@@ -180,7 +195,7 @@ src/bars_dcn/
   preprocessing/    # polars-native sklearn transformers (ln^2 bucketizer, ordinal+min-count, ...)
   estimator.py      # DCNClassifier: sklearn API, Accelerate training loop (MPS)
   pipeline.py       # build_pipeline(config), fit_pipeline(pipe, train, valid)
-  onnx/             # skl2onnx converters + export; importing registers them
+  onnx/             # skl2onnx parsers/converters + to_onnx; importing registers them
   bench/            # dataset registry (paths, MD5s), runner, metrics/reporting
 configs/            # one YAML per (model x dataset)
 scripts/            # make_sample.py, other one-off tooling

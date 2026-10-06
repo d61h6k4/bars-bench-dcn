@@ -1,4 +1,7 @@
-"""skl2onnx converter for ``DCNClassifier``: inlines the exported torch graph, adds the head."""
+"""skl2onnx converter for ``DCNClassifier``.
+
+Selects its fields from the frame, inlines the exported torch graph and adds the head.
+"""
 
 import copy
 from typing import TYPE_CHECKING
@@ -7,7 +10,7 @@ import numpy as np
 import onnx
 import torch
 from onnx import helper
-from skl2onnx.common.shape_calculator import calculate_linear_classifier_output_shapes
+from skl2onnx.common.data_types import FloatTensorType, Int64TensorType
 from torch.export import Dim
 
 if TYPE_CHECKING:
@@ -38,7 +41,10 @@ def export_logit_graph(module: torch.nn.Module, n_fields: int) -> onnx.ModelProt
 
 
 def shape_calculator(operator) -> None:  # noqa: ANN001
-    calculate_linear_classifier_output_shapes(operator)
+    """Set the output types: the label and both class probabilities."""
+    batch = operator.inputs[0].get_first_dimension()
+    operator.outputs[0].type = Int64TensorType([batch])
+    operator.outputs[1].type = FloatTensorType([batch, 2])
 
 
 def _inline(scope, container, graph: onnx.GraphProto, input_name: str) -> str:  # noqa: ANN001
@@ -64,15 +70,35 @@ def _inline(scope, container, graph: onnx.GraphProto, input_name: str) -> str:  
 
 def converter(scope, operator, container) -> None:  # noqa: ANN001
     estimator: DCNClassifier = operator.raw_operator
-    if estimator.cat_columns is not None:
-        msg = "ONNX conversion with cat_columns (column selection) is not implemented yet"
-        raise NotImplementedError(msg)
     if estimator.classes_.dtype.kind not in "iu":
         msg = f"only integer class labels are supported, got {estimator.classes_.dtype}"
         raise NotImplementedError(msg)
+    if not hasattr(estimator, "feature_names_in_"):
+        msg = "ONNX export needs the field order: fit the estimator on a polars frame"
+        raise NotImplementedError(msg)
+
+    # the model's fields, in fit order, from the frame the previous steps produced
+    frame = {variable.raw_name: variable for variable in operator.inputs}
+    fields = [str(name) for name in estimator.feature_names_in_]
+    missing = [name for name in fields if name not in frame]
+    if missing:
+        msg = f"the estimator needs columns {missing}, which are not available at this step"
+        raise ValueError(msg)
+    not_encoded = [name for name in fields if not isinstance(frame[name].type, Int64TensorType)]
+    if not_encoded:
+        msg = f"columns {not_encoded} reach the estimator without being encoded to integer indices"
+        raise ValueError(msg)
+    block = scope.get_unique_variable_name("x_cat")
+    container.add_node(
+        "Concat",
+        [frame[name].full_name for name in fields],
+        block,
+        name=scope.get_unique_operator_name("Concat"),
+        axis=1,
+    )
 
     graph = export_logit_graph(estimator.model_, estimator.n_features_in_).graph
-    logit = _inline(scope, container, graph, operator.inputs[0].full_name)
+    logit = _inline(scope, container, graph, block)
 
     def name(prefix: str) -> str:
         return scope.get_unique_variable_name(prefix)

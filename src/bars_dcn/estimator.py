@@ -160,6 +160,13 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             msg = f"X has {len(index)} rows but y has {len(target)}"
             raise ValueError(msg)
         self.n_features_in_ = index.shape[1]
+        if isinstance(X, pl.DataFrame | pl.LazyFrame):  # field order, needed to export to ONNX
+            names = (
+                list(self.cat_columns)
+                if self.cat_columns is not None
+                else X.lazy().collect_schema().names()
+            )
+            self.feature_names_in_ = np.asarray(names, dtype=object)
         self.cardinalities_ = (index.max(axis=0) + 1).tolist()
         valid = None
         if eval_set is not None:

@@ -103,7 +103,7 @@ def fitted(train):
 
 @pytest.fixture(scope="module")
 def session(fitted):
-    return ort.InferenceSession(to_onnx(fitted, CATS).SerializeToString())
+    return ort.InferenceSession(to_onnx(fitted, dict.fromkeys(CATS, "string")).SerializeToString())
 
 
 def test_onnx_matches_pipeline_on_real_and_edge_rows(fitted, session, requests):
@@ -115,7 +115,7 @@ def test_onnx_matches_pipeline_on_real_and_edge_rows(fitted, session, requests):
 
 
 def test_outputs_are_plain_tensors_not_zipmap(fitted):
-    proto = to_onnx(fitted, CATS)
+    proto = to_onnx(fitted, dict.fromkeys(CATS, "string"))
     assert [output.name for output in proto.graph.output] == ["label", "probabilities"]
     assert "ZipMap" not in {node.op_type for node in proto.graph.node}
 
@@ -151,6 +151,8 @@ def test_dynamic_batch_size(fitted, session, requests, batch):
 @pytest.mark.parametrize(("structure", "mixture"), list(product(STRUCTURES, [False, True])))
 def test_every_structure_and_cross_type_exports(train, requests, structure, mixture):
     pipeline = _fit(train, structure, mixture=mixture)
-    session = ort.InferenceSession(to_onnx(pipeline, CATS).SerializeToString())
+    session = ort.InferenceSession(
+        to_onnx(pipeline, dict.fromkeys(CATS, "string")).SerializeToString()
+    )
     probabilities = np.asarray(session.run(None, _feed(requests))[1])
     np.testing.assert_allclose(probabilities, pipeline.predict_proba(requests), rtol=0, atol=1e-5)
