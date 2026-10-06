@@ -56,6 +56,15 @@ class TrainSettings:
     seed: int | None = None
 
 
+@dataclass(frozen=True)
+class Block:
+    """Encoded inputs of one split: field indices, float numerics (``(n, 0)`` if none), labels."""
+
+    index: np.ndarray
+    numeric: np.ndarray
+    target: np.ndarray
+
+
 class Decision(NamedTuple):
     improved: bool
     lr: float
@@ -118,7 +127,9 @@ def make_accelerator(device: str) -> Accelerator:
     return accelerator
 
 
-def predict_logits(model: DCNv2, index: np.ndarray) -> np.ndarray:
+def predict_logits(
+    model: DCNv2, index: np.ndarray, numeric: np.ndarray | None = None
+) -> np.ndarray:
     """Logits for an index block, in chunks, on the model's device (eval mode, no gradients)."""
     device = next(model.parameters()).device
     was_training = model.training
@@ -126,8 +137,10 @@ def predict_logits(model: DCNv2, index: np.ndarray) -> np.ndarray:
     chunks = []
     with torch.no_grad():
         for start in range(0, len(index), PREDICT_CHUNK):
-            batch = torch.from_numpy(index[start : start + PREDICT_CHUNK]).long().to(device)
-            chunks.append(model(batch).cpu())
+            rows = slice(start, start + PREDICT_CHUNK)
+            batch = torch.from_numpy(index[rows]).long().to(device)
+            extra = None if numeric is None else torch.from_numpy(numeric[rows]).to(device)
+            chunks.append(model(batch, extra).cpu())
     model.train(was_training)
     return torch.cat(chunks).numpy() if chunks else np.empty(0, dtype=np.float32)
 
@@ -143,9 +156,10 @@ def _run_epoch(
     model.train()
     total, steps = torch.zeros((), device=accelerator.device), 0
     started = time.perf_counter()
-    for index, labels in loader:
+    for index, numeric, labels in loader:
         optimizer.zero_grad(set_to_none=True)
-        loss = functional.binary_cross_entropy_with_logits(model(index.long()), labels)
+        logits = model(index.long(), numeric if numeric.shape[1] else None)
+        loss = functional.binary_cross_entropy_with_logits(logits, labels)
         if settings.embedding_regularizer:
             loss = loss + embedding_penalty(model, settings.embedding_regularizer)
         accelerator.backward(loss)
@@ -162,14 +176,14 @@ def _run_epoch(
     return float(total) / max(steps, 1)
 
 
-def _validate(model: DCNv2, valid: tuple[np.ndarray, np.ndarray]) -> tuple[float, float]:
+def _validate(model: DCNv2, valid: Block) -> tuple[float, float]:
     """Return validation AUC and log loss, computed in float64 like FuxiCTR."""
-    index, target = valid
-    probabilities = torch.sigmoid(torch.from_numpy(predict_logits(model, index))).numpy()
-    probabilities = probabilities.astype(np.float64)
+    numeric = valid.numeric if valid.numeric.shape[1] else None
+    logits = predict_logits(model, valid.index, numeric)
+    probabilities = torch.sigmoid(torch.from_numpy(logits)).numpy().astype(np.float64)
     return (
-        float(roc_auc_score(target, probabilities)),
-        float(log_loss(target, probabilities, labels=[0, 1])),
+        float(roc_auc_score(valid.target, probabilities)),
+        float(log_loss(valid.target, probabilities, labels=[0, 1])),
     )
 
 
@@ -187,20 +201,18 @@ class _TensorBoard:
     the state before any update.
     """
 
-    def __init__(
-        self, log_dir: str, index: np.ndarray, target: np.ndarray, device: torch.device
-    ) -> None:
+    def __init__(self, log_dir: str, train: Block, device: torch.device) -> None:
         self.log_dir = log_dir
         self.writer = _summary_writer(f"{log_dir}/metrics")
         rows = slice(0, PROBE_ROWS)
-        self.batch = (
-            torch.from_numpy(index[rows]).long().to(device),
-            torch.from_numpy(target[rows]).to(device),
-        )
+        self.index = torch.from_numpy(train.index[rows]).long().to(device)
+        self.target = torch.from_numpy(train.target[rows]).to(device)
+        has_numeric = train.numeric.shape[1] > 0
+        self.numeric = torch.from_numpy(train.numeric[rows]).to(device) if has_numeric else None
 
     def spp(self, model: DCNv2, epoch: int) -> None:
         with _summary_writer(f"{self.log_dir}/spp/epoch_{epoch:03d}") as writer:
-            probe(model, *self.batch, writer)
+            probe(model, self.index, self.target, writer, self.numeric)
 
     def epoch(self, model: DCNv2, record: dict[str, float]) -> None:
         epoch = int(record["epoch"])
@@ -227,12 +239,11 @@ def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
 
 def fit_network(
     model: DCNv2,
-    index: np.ndarray,
-    target: np.ndarray,
+    train: Block,
     settings: TrainSettings,
-    valid: tuple[np.ndarray, np.ndarray] | None = None,
+    valid: Block | None = None,
 ) -> tuple[DCNv2, TrainResult]:
-    """Train ``model`` on ``index``/``target``; returns it on the CPU with the best weights.
+    """Train ``model`` on ``train``; returns it on the CPU with the best weights.
 
     Without ``valid`` it trains exactly ``max_epochs`` (at a fixed learning rate unless
     ``lr_drop_epochs`` is set); with ``valid`` the LR drops on plateaus, or as scheduled.
@@ -243,8 +254,9 @@ def fit_network(
     if settings.seed is not None:
         generator.manual_seed(settings.seed)
     loader = make_loader(
-        index,
-        target,
+        train.index,
+        train.numeric,
+        train.target,
         settings.batch_size,
         generator,
         num_workers=settings.num_workers,
@@ -258,7 +270,7 @@ def fit_network(
 
     board = None
     if settings.log_dir:
-        board = _TensorBoard(settings.log_dir, index, target, accelerator.device)
+        board = _TensorBoard(settings.log_dir, train, accelerator.device)
         board.spp(model, epoch=0)
 
     history: list[dict[str, float]] = []

@@ -122,3 +122,36 @@ def test_wrong_number_of_fields_is_rejected(data):
 def test_predict_before_fit_raises_not_fitted(data):
     with pytest.raises(NotFittedError):
         _model().predict_proba(data[0])
+
+
+def _frame_with_numeric(data):
+    x, y = data
+    frame = pl.DataFrame({"a": x[:, 0], "b": x[:, 1], "c": x[:, 2]})
+    frame = frame.with_columns(
+        n0=pl.Series(np.linspace(0, 1, 50)), n1=pl.Series(np.linspace(1, 0, 50))
+    )
+    return frame, y
+
+
+def test_numeric_block_is_trained_and_used_at_predict(data):
+    frame, y = _frame_with_numeric(data)
+    model = _model(cat_columns=["a", "b", "c"], num_columns=["n0", "n1"]).fit(frame, y)
+    assert model.n_numeric_in_ == 2
+    assert model.model_.num_features == 2
+    shifted = frame.with_columns(pl.col("n0") + 5.0)
+    assert not np.allclose(model.predict_proba(frame), model.predict_proba(shifted))
+
+
+def test_num_columns_requires_explicit_cat_columns(data):
+    frame, y = _frame_with_numeric(data)
+    with pytest.raises(ValueError, match="explicit cat_columns"):
+        _model(num_columns=["n0"]).fit(frame, y)
+
+
+def test_non_finite_numerics_are_rejected(data):
+    frame, y = _frame_with_numeric(data)
+    frame = frame.with_columns(
+        pl.when(pl.int_range(pl.len()) == 3).then(None).otherwise(pl.col("n0")).alias("n0")
+    )
+    with pytest.raises(ValueError, match="finite"):
+        _model(cat_columns=["a", "b", "c"], num_columns=["n0"]).fit(frame, y)

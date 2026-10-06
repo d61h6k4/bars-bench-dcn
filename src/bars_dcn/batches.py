@@ -21,26 +21,30 @@ MIN_BATCH_ROWS = 2  # BatchNorm cannot train on a single row
 
 
 class RowGather(Dataset):
-    """Index block and labels; ``__getitems__`` gathers a whole batch of rows in one call."""
+    """Index block, numeric block and labels; ``__getitems__`` gathers a whole batch in one call."""
 
     def __init__(
-        self, index: np.ndarray, target: np.ndarray, *, share_memory: bool = False
+        self,
+        index: np.ndarray,
+        numeric: np.ndarray,
+        target: np.ndarray,
+        *,
+        share_memory: bool = False,
     ) -> None:
-        self.index = torch.from_numpy(index)
-        self.target = torch.from_numpy(target)
+        self.tensors = tuple(torch.from_numpy(a) for a in (index, numeric, target))
         if share_memory:  # worker processes then map the data instead of receiving a copy
-            self.index.share_memory_()
-            self.target.share_memory_()
+            for tensor in self.tensors:
+                tensor.share_memory_()
 
     def __len__(self) -> int:
-        return len(self.index)
+        return len(self.tensors[0])
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.index[index], self.target[index]
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, ...]:
+        return tuple(t[index] for t in self.tensors)
 
-    def __getitems__(self, rows: list[int]) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitems__(self, rows: list[int]) -> tuple[torch.Tensor, ...]:
         rows_tensor = torch.as_tensor(rows)
-        return self.index[rows_tensor], self.target[rows_tensor]
+        return tuple(t[rows_tensor] for t in self.tensors)
 
 
 class ShuffledBatches(Sampler[list[int]]):
@@ -70,6 +74,7 @@ def _whole_batch(batch: Any) -> Any:
 
 def make_loader(
     index: np.ndarray,
+    numeric: np.ndarray,
     target: np.ndarray,
     batch_size: int,
     generator: torch.Generator,
@@ -78,13 +83,13 @@ def make_loader(
     prefetch_factor: int = 2,
     pin_memory: bool = False,
 ) -> DataLoader:
-    """Shuffled training batches of ``(index_block, labels)`` as CPU tensors.
+    """Shuffled training batches of ``(index_block, numeric_block, labels)`` as CPU tensors.
 
     ``num_workers=0`` gathers in the training process; with workers the gather runs
     ``prefetch_factor`` batches ahead of the step. ``pin_memory`` speeds up host-to-GPU copies
     (CUDA).
     """
-    dataset = RowGather(index, target, share_memory=num_workers > 0)
+    dataset = RowGather(index, numeric, target, share_memory=num_workers > 0)
     return DataLoader(
         dataset,
         batch_sampler=ShuffledBatches(len(dataset), batch_size, generator),

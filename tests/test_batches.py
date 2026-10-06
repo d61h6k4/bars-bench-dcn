@@ -6,20 +6,24 @@ from bars_dcn.batches import RowGather, ShuffledBatches, make_loader
 from bars_dcn.estimator import DCNClassifier
 
 
+def _NO_NUMERIC(x):  # noqa: N802
+    return np.empty((len(x), 0), dtype=np.float32)
+
+
 def _data(n=103):
     x = np.arange(n * 3, dtype=np.int32).reshape(n, 3)
     return x, np.arange(n, dtype=np.float32)
 
 
 def _epoch_rows(loader):
-    return [row for index, _ in loader for row in (index[:, 0] // 3).tolist()]
+    return [row for index, _, _ in loader for row in (index[:, 0] // 3).tolist()]
 
 
 def test_order_is_the_seeded_randperm_of_the_previous_loop():
     x, y = _data()
     generator = torch.Generator().manual_seed(7)
     reference = torch.Generator().manual_seed(7)
-    loader = make_loader(x, y, 16, generator)
+    loader = make_loader(x, _NO_NUMERIC(x), y, 16, generator)
     for _ in range(3):  # a fresh permutation per epoch, drawn in the same sequence
         assert _epoch_rows(loader) == torch.randperm(103, generator=reference).tolist()
 
@@ -27,10 +31,12 @@ def test_order_is_the_seeded_randperm_of_the_previous_loop():
 @pytest.mark.parametrize("workers", [0, 2])
 def test_batches_hold_the_matching_rows_and_labels(workers):
     x, y = _data()
-    loader = make_loader(x, y, 16, torch.Generator().manual_seed(0), num_workers=workers)
+    loader = make_loader(
+        x, _NO_NUMERIC(x), y, 16, torch.Generator().manual_seed(0), num_workers=workers
+    )
     batches = list(loader)
     assert [len(b[0]) for b in batches] == [16] * 6 + [7]
-    for index, labels in batches:
+    for index, _, labels in batches:
         assert index.dtype == torch.int32
         assert labels.dtype == torch.float32
         assert (index[:, 0] // 3).tolist() == labels.long().tolist()  # row i has label i
@@ -39,7 +45,9 @@ def test_batches_hold_the_matching_rows_and_labels(workers):
 def test_order_does_not_depend_on_the_number_of_workers():
     x, y = _data()
     orders = [
-        _epoch_rows(make_loader(x, y, 16, torch.Generator().manual_seed(3), num_workers=w))
+        _epoch_rows(
+            make_loader(x, _NO_NUMERIC(x), y, 16, torch.Generator().manual_seed(3), num_workers=w)
+        )
         for w in (0, 2)
     ]
     assert orders[0] == orders[1]
@@ -55,8 +63,8 @@ def test_a_trailing_single_row_batch_is_dropped():
 
 def test_workers_share_the_data_instead_of_copying_it():
     x, y = _data()
-    assert not RowGather(x, y).index.is_shared()
-    assert RowGather(x, y, share_memory=True).index.is_shared()
+    assert not RowGather(x, _NO_NUMERIC(x), y).tensors[0].is_shared()
+    assert RowGather(x, _NO_NUMERIC(x), y, share_memory=True).tensors[0].is_shared()
 
 
 def test_training_results_do_not_depend_on_num_workers():

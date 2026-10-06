@@ -119,7 +119,13 @@ class SignalPropagation:
             writer.add_scalar(f"{FORWARD}/{scope}Zero_Fraction", zeros, step)
 
 
-def probe(model: DCNv2, index: Tensor, target: Tensor, writer: SummaryWriter) -> None:
+def probe(
+    model: DCNv2,
+    index: Tensor,
+    target: Tensor,
+    writer: SummaryWriter,
+    numeric: Tensor | None = None,
+) -> None:
     """One eval-mode forward/backward pass on a fixed batch, written with ``writer``.
 
     Eval mode keeps BatchNorm running statistics and dropout masks out of the picture; the
@@ -129,7 +135,7 @@ def probe(model: DCNv2, index: Tensor, target: Tensor, writer: SummaryWriter) ->
     model.eval()
     try:
         with SignalPropagation(model) as spp:
-            loss = functional.binary_cross_entropy_with_logits(model(index), target)
+            loss = functional.binary_cross_entropy_with_logits(model(index, numeric), target)
             loss.backward()
         spp.write(writer)
     finally:

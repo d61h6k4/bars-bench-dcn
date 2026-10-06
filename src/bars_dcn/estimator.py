@@ -12,9 +12,15 @@ from sklearn.utils.validation import check_is_fitted
 
 from bars_dcn.model import DCNv2
 from bars_dcn.model.dcn import Structure
-from bars_dcn.training import PREDICT_CHUNK, TrainSettings, fit_network, predict_logits
+from bars_dcn.training import PREDICT_CHUNK, Block, TrainSettings, fit_network, predict_logits
 
 Frame = pl.DataFrame | pl.LazyFrame | np.ndarray
+
+
+def _n_rows(X: Frame) -> int:
+    if isinstance(X, pl.LazyFrame):
+        return X.select(pl.len()).collect().item()
+    return len(X)
 
 
 def to_index_array(X: Frame) -> np.ndarray:
@@ -37,6 +43,10 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     passthrough columns; ``None`` uses every column. Field cardinalities are inferred at ``fit``
     as ``max index + 1``.
 
+    ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
+    that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
+    The numerics must be finite (impute first).
+
     Input contract (enforced): integer dtype, non-negative, and at predict time below the
     per-field cardinality seen in ``fit`` (a larger index would silently read another field's
     embedding row, since all fields share one table). Floats, NaN and negatives are rejected.
@@ -57,6 +67,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self,
         *,
         cat_columns: Sequence[str] | None = None,
+        num_columns: Sequence[str] | None = None,
         embedding_dim: int = 16,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
@@ -83,6 +94,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         random_state: int | None = None,
     ) -> None:
         self.cat_columns = cat_columns
+        self.num_columns = num_columns
         self.embedding_dim = embedding_dim
         self.structure = structure
         self.num_cross_layers = num_cross_layers
@@ -132,6 +144,26 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(msg)
         return index
 
+    def _numeric_block(self, X: Frame) -> np.ndarray:
+        """Return the numeric columns as an ``(n, K)`` float32 array (``K = 0`` without any)."""
+        if self.num_columns is None:
+            return np.empty((_n_rows(X), 0), dtype=np.float32)
+        if not isinstance(X, pl.DataFrame | pl.LazyFrame):
+            msg = "num_columns requires a polars DataFrame or LazyFrame"
+            raise TypeError(msg)
+        numeric = to_index_array(X.select(self.num_columns).cast(pl.Float32)).astype(np.float32)
+        if not np.isfinite(numeric).all():
+            msg = "numeric columns must be finite (no null, NaN or inf): impute them first"
+            raise ValueError(msg)
+        return numeric
+
+    def _checked_numeric(self, X: Frame) -> np.ndarray:
+        numeric = self._numeric_block(X)
+        if numeric.shape[1] != self.n_numeric_in_:
+            msg = f"X has {numeric.shape[1]} numeric columns, expected {self.n_numeric_in_}"
+            raise ValueError(msg)
+        return numeric
+
     def _checked_index(self, X: Frame) -> np.ndarray:
         """Index block validated against the fitted field count and cardinalities."""
         index = self._index_block(X)
@@ -155,7 +187,11 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         return (values == self.classes_[1]).astype(np.float32)
 
     def fit(self, X: Frame, y: object, eval_set: tuple[Frame, object] | None = None) -> Self:
+        if self.num_columns is not None and self.cat_columns is None:
+            msg = "num_columns needs explicit cat_columns (the frame also holds the raw numerics)"
+            raise ValueError(msg)
         index = self._index_block(X)
+        numeric = self._numeric_block(X)
         self.classes_ = np.unique(np.asarray(y))
         if len(self.classes_) != 2:  # noqa: PLR2004
             msg = f"only binary classification is supported, got {len(self.classes_)} classes"
@@ -165,6 +201,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             msg = f"X has {len(index)} rows but y has {len(target)}"
             raise ValueError(msg)
         self.n_features_in_ = index.shape[1]
+        self.n_numeric_in_ = numeric.shape[1]
+        if self.num_columns is not None:
+            self.numeric_names_in_ = np.asarray(list(self.num_columns), dtype=object)
         if isinstance(X, pl.DataFrame | pl.LazyFrame):  # field order, needed to export to ONNX
             names = (
                 list(self.cat_columns)
@@ -175,12 +214,17 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.cardinalities_ = (index.max(axis=0) + 1).tolist()
         valid = None
         if eval_set is not None:
-            valid = (self._checked_index(eval_set[0]), self._binary_target(eval_set[1]))
+            valid = Block(
+                self._checked_index(eval_set[0]),
+                self._checked_numeric(eval_set[0]),
+                self._binary_target(eval_set[1]),
+            )
 
         if self.random_state is not None:
             torch.manual_seed(self.random_state)
         model = DCNv2(
             self.cardinalities_,
+            num_features=self.n_numeric_in_,
             embedding_dim=self.embedding_dim,
             structure=self.structure,
             num_cross_layers=self.num_cross_layers,
@@ -208,7 +252,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             log_dir=self.log_dir,
             seed=self.random_state,
         )
-        self.model_, result = fit_network(model, index, target, settings, valid)
+        self.model_, result = fit_network(model, Block(index, numeric, target), settings, valid)
         self.history_ = result.history
         self.best_epoch_ = result.best_epoch
         return self
@@ -216,7 +260,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     def predict_proba(self, X: Frame) -> np.ndarray:
         check_is_fitted(self)
         index = self._checked_index(X)
-        positive = torch.sigmoid(torch.from_numpy(predict_logits(self.model_, index))).numpy()
+        numeric = self._checked_numeric(X) if self.n_numeric_in_ else None
+        logits = predict_logits(self.model_, index, numeric)
+        positive = torch.sigmoid(torch.from_numpy(logits)).numpy()
         return np.stack([1 - positive, positive], axis=1)
 
     def predict(self, X: Frame) -> np.ndarray:

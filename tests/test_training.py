@@ -287,13 +287,17 @@ def test_progress_is_logged_every_n_steps(caplog):
     # 4 batches of 16, but log_every_steps defaults to 500: no step lines for a short epoch
     assert not [r for r in caplog.records if r.getMessage().startswith("step ")]
 
-    from bars_dcn.training import TrainSettings, fit_network  # noqa: PLC0415
+    from bars_dcn.training import Block, TrainSettings, fit_network  # noqa: PLC0415
 
     model = DCNv2([5, 6], embedding_dim=2, parallel_hidden_units=[4])
     settings = TrainSettings(batch_size=16, max_epochs=1, device="cpu", log_every_steps=2)
     caplog.clear()
     with caplog.at_level("INFO", logger="bars_dcn.training"):
-        fit_network(model, x.astype(np.int64), y.astype(np.float32), settings)
+        fit_network(
+            model,
+            Block(x.astype(np.int64), np.empty((len(x), 0), np.float32), y.astype(np.float32)),
+            settings,
+        )
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("step ")]
     assert [line.split(":")[0] for line in lines] == ["step 2/4", "step 4/4"]
     assert "steps/s" in lines[0]
