@@ -432,7 +432,5 @@ preprocessing set and training are built. Each milestone ends with its verificat
   log-squared buckets under the BARS recipe on this seed; results are confounded by the plateau rule's LR-drop timing
   (+-0.001), a fixed-schedule comparison was not run (user declined). `multihash1m` epoch 5 val AUC 0.811281 (baseline
   0.811634).
-- 2026-10-06 (night plan, user asleep): when the M7+M9 queue ends (~22:35 UTC), record its results; then run the
-  5-seed protocol of the best schedule found (`experiments/m8_5seed.txt`: BARS recipe + LR drop after epoch 4, seeds
-  2019 2020 2021 2023; seed 2022 is the earlier `lrdrop4` run) on the same pod, record the 5-seed mean/std, and delete the
-  pod (it bills $0.74/h). Features (PLE / multihash / ScalarLens) are not added unattended: only reported.
+- 2026-10-06 (night plan, revised by the user): the 5-seed protocol is NOT needed (`experiments/m8_5seed.txt` removed).
+  When the M7+M9 queue ends (~22:35 UTC), record its results, then delete the pod (it bills $0.74/h) and leave a summary.
