@@ -407,3 +407,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   next to the paper's "uniform"; the queue `experiments/m7_m9.txt` now runs both (scalarlens_q, scalarlens),
   then multihash1m, ple16, both16. Gated/inner cross and top-k MoE: deprioritized (see M8); DCN-Mix first as a
   signal for the cross-layer family.
+- 2026-10-06: M8 batch 1 complete (seed 2022; test AUC / LogLoss, best epoch): lrdrop4 0.814925 / 0.437186 (6),
+  lrdrop5 0.814787 / 0.437420 (7), lrdrop6 0.814466 / 0.437697 (7), lrdrop7 0.813972 / 0.438288 (8). lrdrop7 is
+  bit-identical to the plateau baseline of seed 2022 (the plateau rule dropped after epoch 7 for that seed), a
+  reproducibility check across two pods. Earlier drop = better, monotonically (0.814925 > 0.814787 > 0.814466 >
+  0.813972); drop after epoch 6 (BARS's own timing) reaches 0.814466 vs BARS 0.814514. The pod then ran
+  idle 18:55-19:02 UTC before being pointed at `experiments/m7_m9.txt` (restart ~19:02).
