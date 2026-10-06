@@ -425,3 +425,10 @@ preprocessing set and training are built. Each milestone ends with its verificat
   baseline (0.419 vs 0.4275 at epoch 10) while val LogLoss rises (0.4436): overfits, nothing regularizes it (L2 only
   on the categorical table). Not yet tested: ScalarLens with the epoch-4 fixed LR drop (it peaks early), or with
   regularization. `scalarlens` (uniform init) epoch 1: val AUC 0.804772 (baseline 0.806365, quantile 0.808703).
+- 2026-10-06: M9 `scalarlens` (paper's equal-width initial intervals; seed 2022; plateau LR rule): valid 0.813555, test
+  0.813898, test LogLoss 0.438118, best epoch 4 of 6 (the plateau rule dropped the LR already after epoch 2; peak 2
+  epochs later, then overfits: val LogLoss 0.4463 at epoch 6). vs baseline 0.813972 / 0.438288: -0.00007 AUC (noise),
+  -0.00017 LogLoss; vs `scalarlens_q` 0.813533: +0.00037. Conclusion so far: ScalarLens (either init) does not beat the
+  log-squared buckets under the BARS recipe on this seed; results are confounded by the plateau rule's LR-drop timing
+  (+-0.001), a fixed-schedule comparison was not run (user declined). `multihash1m` epoch 5 val AUC 0.811281 (baseline
+  0.811634).
