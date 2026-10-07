@@ -470,3 +470,9 @@ preprocessing set and training are built. Each milestone ends with its verificat
   finished 00:00 UTC, both jobs exit 0. vs unregularized `scalarlens_q` (0.813257 / 0.813533 / 0.439017): +0.00113 test AUC,
   -0.00134 LogLoss; vs `scalarlens_q_l2` (0.815155 / 0.815478 / 0.436839): -0.00082 / +0.00084 (L2 is the better regularizer);
   vs baseline (0.813972 / 0.438288): +0.00069 / -0.00061; vs BARS (0.814514 / 0.437631): +0.00015 / -0.00006. Single seed, not tuned.
+- 2026-10-07 morning summary (night run, seed 2022 only, plateau LR rule, test AUC / LogLoss; baseline 0.813972 / 0.438288,
+  BARS 0.814514 / 0.437631). Queue 1: scalarlens_q 0.813533 / 0.439017, scalarlens 0.813898 / 0.438118, multihash1m 0.813709 /
+  0.438556 (-32% params), ple16 0.814703 / 0.437709, both16 0.814994 / 0.437286. Queue 2: scalarlens_q_l2 0.815478 / 0.436839
+  (best of the session, +0.00096 AUC over BARS), scalarlens_q_drop 0.814662 / 0.437674. Caveats: one seed, a-priori L2/dropout
+  values, LR-drop timing noise ~0.001, not a leaderboard claim. Untested: ScalarLens+L2 with the epoch-4 fixed LR drop and with
+  PLE bins, other seeds. Pod zg2efby39dz5ra deleted 2026-10-07 ~00:08 UTC; cost since 15:12 UTC on 10-06 about 9 h x $0.74/h = ~$6.7.
