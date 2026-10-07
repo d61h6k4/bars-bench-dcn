@@ -465,3 +465,8 @@ preprocessing set and training are built. Each milestone ends with its verificat
   choice (not tuned), seed 2022 is the baseline's best-validation seed (a tough seed for the comparison, but still one seed);
   plateau-rule LR timing noise ~0.001. Untested: with the fixed epoch-4 LR drop, with PLE bins, other seeds. `scalarlens_q_drop`
   (token dropout 0.1) started 23:15 UTC.
+- 2026-10-07: M9 `scalarlens_q_drop` (ScalarLens, quantile boundaries, whole-token dropout 0.1, no L2; seed 2022; plateau LR rule):
+  valid 0.814212, test 0.814662, test LogLoss 0.437674, best epoch 9 of 11 (LR dropped after epoch 8), 20,417,425 params, queue 2
+  finished 00:00 UTC, both jobs exit 0. vs unregularized `scalarlens_q` (0.813257 / 0.813533 / 0.439017): +0.00113 test AUC,
+  -0.00134 LogLoss; vs `scalarlens_q_l2` (0.815155 / 0.815478 / 0.436839): -0.00082 / +0.00084 (L2 is the better regularizer);
+  vs baseline (0.813972 / 0.438288): +0.00069 / -0.00061; vs BARS (0.814514 / 0.437631): +0.00015 / -0.00006. Single seed, not tuned.
