@@ -548,3 +548,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
   step 6 ScalarLens change): fp32 487 us, int8 201 us (v2: 211 us, -10 us / -5%), graph 145 -> 117 nodes (fp32); AUC on 300k test rows int8 0.809062 vs fp32 0.809068
   (a fresh 1-epoch run again: absolute AUC varies between runs, the int8-fp32 gap does not). The x86 gain of this step is not yet measured (the LabelEncoder
   share is larger there, ~12% of the profile).
+- 2026-10-07: M10 side check, newer opset. ScalarLens alone, batch 1, 1 thread, M2: replacing the manual RMS norm by `F.rms_norm` and exporting at opset 23
+  (RMSNormalization) gives 77 -> 74 nodes and 37.3 -> 37.1 us: no gain (ORT already fuses this pattern, and kernels do not depend on the opset). Opset stays 20
+  (the minimum for StringConcat); reverted.
