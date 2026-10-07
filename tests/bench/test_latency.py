@@ -18,7 +18,7 @@ from bars_dcn.bench.latency import (
 )
 from bars_dcn.estimator import DCNClassifier
 from bars_dcn.onnx import to_onnx
-from bars_dcn.onnx.quantize import quantize_dense
+from bars_dcn.onnx.quantize import quantize_dense, quantize_embedding
 from bars_dcn.preprocessing import MissingFiller, OrdinalEncoder
 
 SAMPLE = Path(__file__).parents[1] / "data" / "criteo_x4_sample"
@@ -132,3 +132,25 @@ def test_evaluate_scores_a_partial_last_batch(exported):
     assert scores["rows"] == 100
     assert 0.3 < scores["auc"] < 1
     assert scores["logloss"] > 0
+
+
+@pytest.mark.parametrize(("kind", "tolerance"), [("fp16", 1e-3), ("int8", 5e-3)])
+def test_quantized_embedding_table_is_smaller_and_close_to_fp32(
+    exported, tmp_path, kind, tolerance
+):
+    path, requests = exported
+    target = tmp_path / f"{kind}.onnx"
+    tables = quantize_embedding(path, target, kind, min_rows=100)
+    assert tables == ["embedding_weight"]
+    assert target.stat().st_size < path.stat().st_size
+    outputs = []
+    for model in (path, target):
+        session = make_session(model.read_bytes(), threads=1)
+        (feed,) = make_feeds(session, requests, batch=len(requests), count=1)
+        outputs.append(np.asarray(session.run(None, feed)[1])[:, 1])
+    np.testing.assert_allclose(outputs[1], outputs[0], atol=tolerance)
+
+
+def test_embedding_quantization_needs_a_table(exported, tmp_path):
+    with pytest.raises(ValueError, match="no embedding table"):
+        quantize_embedding(exported[0], tmp_path / "x.onnx", "int8", min_rows=10**9)

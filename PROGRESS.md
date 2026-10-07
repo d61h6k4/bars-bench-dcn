@@ -509,3 +509,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (-8% / -6%). int8 vs fp32 AUC on 300k test rows 0.809172 vs 0.809166 (+0.00001), LogLoss 0.438907 vs 0.438908. Left at 211 us: dense
   ~55-60% (bound 125 us), string lookups ~26 profiled us, the rest is ScalarLens coordinate/normalization ops (einsum, slices, mul/add);
   diminishing returns without restructuring ScalarLens. fp32 is unchanged because it is memory bound.
+- 2026-10-07: M10 step 4, embedding table (`quantize_embedding`, int8 with a scale per row, or fp16; the table is 909,700 x 16 = 58 MB fp32).
+  M2 Max, batch 1, p50 1 thread / 4 threads, ONNX size, AUC on 300k test rows (same 1-epoch model as step 3):
+  fp32 535 / 242 us, 94 MB, 0.809166; fp32 + emb int8 540 / 238, 54 MB, 0.809166; int8 dense 204 / 160, 77 MB, 0.809172;
+  int8 dense + emb fp16 218 / 151, 48 MB, 0.809173; int8 dense + emb int8 212 / 145, 37 MB, 0.809175 (LogLoss 0.438902 vs 0.438908).
+  So the table quantization costs no accuracy and shrinks the file by 52% (77 -> 37 MB), but does not speed up batch 1 on this
+  machine: a request gathers 26 random rows of 64 B (one cache line each), which is latency not bandwidth bound, and the 4-thread gain
+  (160 -> 145 us) is the only visible one. It should matter on x86 if the 15-18 MB int8 table fits a shared L3 where 58 MB does
+  not, and for reload time / RAM per model. To be re-measured on Hetzner; the realistic access pattern is skewed (hot rows) while the
+  bench replays 20k distinct test rows.

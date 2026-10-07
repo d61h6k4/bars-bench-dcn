@@ -1,4 +1,4 @@
-"""Post-training int8 quantization of the large dense layers of an exported pipeline.
+"""Post-training quantization of an exported pipeline: dense layers (int8), embedding tables.
 
 At batch 1 the MLP and cross layers are weight-streaming bound, so int8 weights (a quarter of
 the bytes) are the lever. Each large ``Gemm`` becomes ``DynamicQuantizeLinear`` (uint8
@@ -7,7 +7,7 @@ weights -> rescale -> bias. Only layers with at least ``min_weights`` weights ar
 small ScalarLens projections would gain nodes for no saving.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import onnx
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _INT8_MAX = 127
+_MATRIX = 2  # dimensions of a weight matrix
 _BIAS = 2  # position of the optional bias among a Gemm's inputs
 
 
@@ -93,6 +94,83 @@ def quantize_dense(source: Path, target: Path, min_weights: int = 100_000) -> li
         raise ValueError(msg)
     used = {i for node in new_nodes for i in node.input}
     keep = [i for i in model.graph.initializer if i.name not in drop or i.name in used]
+    del model.graph.node[:]
+    model.graph.node.extend(new_nodes)
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(keep)
+    onnx.save(model, target)
+    return replaced
+
+
+def quantize_embedding(
+    source: Path, target: Path, kind: Literal["int8", "fp16"], min_rows: int = 100_000
+) -> list[str]:
+    """Write ``target``: ``source`` with its large embedding tables stored as ``int8`` or ``fp16``.
+
+    A table is a constant 2-D ``Gather`` data input with at least ``min_rows`` rows. ``int8`` keeps
+    one scale per row (a row is one embedding vector): the rows and their scales are gathered
+    and rescaled. ``fp16`` gathers half-precision rows and casts them up. Returns the table names.
+    """
+    model = onnx.load(source)
+    weights = {i.name: i for i in model.graph.initializer}
+    new_nodes: list[onnx.NodeProto] = []
+    replaced: list[str] = []
+    for node in model.graph.node:
+        table = weights.get(node.input[0]) if node.op_type == "Gather" else None
+        if table is None or len(table.dims) != _MATRIX or table.dims[0] < min_rows:
+            new_nodes.append(node)
+            continue
+        axis = next((a.i for a in node.attribute if a.name == "axis"), 0)
+        if axis != 0:
+            msg = f"Gather {node.name!r} reads {table.name!r} along axis {axis}, expected 0"
+            raise NotImplementedError(msg)
+        matrix = numpy_helper.to_array(table)
+        name = node.name or node.output[0]
+        if kind == "fp16":
+            half = numpy_helper.from_array(matrix.astype(np.float16), f"{name}_fp16")
+            model.graph.initializer.append(half)
+            rows = helper.make_node(
+                "Gather", [half.name, node.input[1]], [f"{name}_rows"], axis=0, name=f"{name}_g"
+            )
+            cast = helper.make_node(
+                "Cast", [f"{name}_rows"], [node.output[0]], to=TensorProto.FLOAT, name=f"{name}_c"
+            )
+            new_nodes.extend([rows, cast])
+        else:
+            scale = np.maximum(np.abs(matrix).max(axis=1, keepdims=True), 1e-12) / _INT8_MAX
+            quantized = np.clip(np.rint(matrix / scale), -_INT8_MAX, _INT8_MAX).astype(np.int8)
+            model.graph.initializer.extend(
+                [
+                    numpy_helper.from_array(quantized, f"{name}_int8"),
+                    numpy_helper.from_array(scale.astype(np.float32), f"{name}_scale"),
+                ]
+            )
+            new_nodes.extend(
+                [
+                    helper.make_node(
+                        "Gather", [f"{name}_int8", node.input[1]], [f"{name}_rows"],
+                        axis=0, name=f"{name}_g",
+                    ),
+                    helper.make_node(
+                        "Gather", [f"{name}_scale", node.input[1]], [f"{name}_row_scale"],
+                        axis=0, name=f"{name}_gs",
+                    ),
+                    helper.make_node(
+                        "Cast", [f"{name}_rows"], [f"{name}_rows_f"], to=TensorProto.FLOAT,
+                        name=f"{name}_c",
+                    ),
+                    helper.make_node(
+                        "Mul", [f"{name}_rows_f", f"{name}_row_scale"], [node.output[0]],
+                        name=f"{name}_m",
+                    ),
+                ]
+            )  # fmt: skip
+        replaced.append(table.name)
+    if not replaced:
+        msg = f"no embedding table with at least {min_rows} rows in {source}"
+        raise ValueError(msg)
+    used = {i for node in new_nodes for i in node.input}
+    keep = [i for i in model.graph.initializer if i.name in used]
     del model.graph.node[:]
     model.graph.node.extend(new_nodes)
     del model.graph.initializer[:]
