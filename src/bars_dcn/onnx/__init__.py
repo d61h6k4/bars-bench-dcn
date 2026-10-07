@@ -18,6 +18,7 @@ from bars_dcn.estimator import DCNClassifier
 from bars_dcn.onnx import _estimator, _transformers
 from bars_dcn.onnx._builder import ML_DOMAIN, TENSOR_TYPES
 from bars_dcn.onnx._estimator import ONNX_OPSET
+from bars_dcn.onnx._simplify import cancel_split_concat
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -49,9 +50,10 @@ def to_onnx(model: object, inputs: Mapping[str, str]) -> onnx.ModelProto:
     if unknown:
         msg = f"input types must be one of {sorted(TENSOR_TYPES)}, got {unknown}"
         raise ValueError(msg)
-    return convert_sklearn(
+    converted = convert_sklearn(
         model,
         initial_types=[(name, TENSOR_TYPES[dtype]([None, 1])) for name, dtype in inputs.items()],
         target_opset={"": ONNX_OPSET, ML_DOMAIN: ML_OPSET},
         options={DCNClassifier: {"zipmap": False}},
     )
+    return cancel_split_concat(converted)

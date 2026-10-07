@@ -65,9 +65,20 @@ class ScalarLens(nn.Module):
         self.up = nn.Parameter(torch.randn(rank, mixed) / rank**0.5)  # V
         self.step_logits = nn.Parameter(torch.zeros(steps))  # alpha_t = sigmoid(.)
         readout_in = dim + state * (1 + steps)
-        self.readout = nn.ModuleList(
-            nn.Sequential(nn.Linear(readout_in, head_width), nn.SiLU(), nn.Linear(head_width, dim))
+        # per-field readout MLP, stacked so one batched matmul serves every numeric field
+        readouts = [
+            (nn.Linear(readout_in, head_width), nn.Linear(head_width, dim))
             for _ in range(n_numeric)
+        ]  # default Linear init, drawn field by field
+        self.readout_w1 = nn.Parameter(
+            torch.stack([first.weight.T for first, _ in readouts]).detach()
+        )
+        self.readout_b1 = nn.Parameter(torch.stack([first.bias for first, _ in readouts]).detach())
+        self.readout_w2 = nn.Parameter(
+            torch.stack([second.weight.T for _, second in readouts]).detach()
+        )
+        self.readout_b2 = nn.Parameter(
+            torch.stack([second.bias for _, second in readouts]).detach()
         )
         self.gain = nn.Parameter(torch.zeros(n_numeric))  # positive gain = softplus(.)
         nn.init.xavier_normal_(self.head_weight)
@@ -135,9 +146,10 @@ class ScalarLens(nn.Module):
             states.append(state.reshape(batch, fields, self.state)[:, : self.n_numeric])
         gate = gate.reshape(batch, fields, self.state)[:, : self.n_numeric]
         features = torch.cat([normalized[:, : self.n_numeric], gate, *states], dim=-1)
-        out = torch.stack(
-            [head(features[:, i]) for i, head in enumerate(self.readout)], dim=1
-        )  # (B, N, d)
+        hidden = torch.nn.functional.silu(
+            torch.einsum("bnf,nfw->bnw", features, self.readout_w1) + self.readout_b1
+        )
+        out = torch.einsum("bnw,nwd->bnd", hidden, self.readout_w2) + self.readout_b2  # (B, N, d)
         out = out * torch.nn.functional.softplus(self.gain).unsqueeze(-1)
         if self.training and self.token_dropout > 0:
             keep = torch.rand(batch, self.n_numeric, 1, device=out.device) >= self.token_dropout

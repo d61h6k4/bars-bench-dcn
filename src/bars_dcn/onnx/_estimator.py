@@ -110,9 +110,27 @@ def _block(
         msg = f"columns {wrong} reach the estimator without being encoded to {label}"
         raise ValueError(msg)
     out = scope.get_unique_variable_name(prefix)
+    columns = [frame[name] for name in names]
+    if all(isinstance(c.type, DoubleTensorType) for c in columns):  # one Cast for the block
+        block = scope.get_unique_variable_name("block")
+        container.add_node(
+            "Concat",
+            [c.full_name for c in columns],
+            block,
+            name=scope.get_unique_operator_name("Concat"),
+            axis=1,
+        )
+        container.add_node(
+            "Cast",
+            block,
+            out,
+            name=scope.get_unique_operator_name("Cast"),
+            to=onnx.TensorProto.FLOAT,
+        )
+        return out
     container.add_node(
         "Concat",
-        [_as_float(scope, container, frame[name]) for name in names],
+        [_as_float(scope, container, c) for c in columns],
         out,
         name=scope.get_unique_operator_name("Concat"),
         axis=1,

@@ -500,3 +500,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   test rows (paired, ORT): AUC 0.809481 -> 0.809454 (-0.00003), LogLoss 0.438657 -> 0.438684 (+0.00003): negligible (the absolute
   AUC is low because this model trained 1 epoch). The bound shown for int8 uses the fp32 GEMM peak, so its compute side is
   pessimistic. Remaining at 230 us: dense ~55%, the rest is glue ops / lookups / ScalarLens.
+- 2026-10-07: M10 step 3, glue ops (fp32 graph 254 -> 145 nodes; behaviour unchanged). (a) ScalarLens readout: the 13 per-field MLPs are
+  now stacked parameters (`readout_w1/b1/w2/b2`, one batched einsum; initialized from the same per-field `nn.Linear` draws, output
+  identical to the old module within 2e-8 on a seeded input; old checkpoints do not load). (b) `MissingFiller` emits one
+  Concat -> IsNaN -> Where -> Split over all columns, the estimator concatenates the numeric block first and casts it once, and a graph
+  pass (`onnx/_simplify.py`, run in `to_onnx`) cancels `Concat(Split(x))`. Re-exported 1-epoch ScalarLens (a new training run, so its AUC differs
+  from step 2's), M2 Max, batch 1, p50: fp32 527 us (1 thread) / 234 (4); int8 211 us (1) / 160 (4), vs step 2 int8 230 / 171
+  (-8% / -6%). int8 vs fp32 AUC on 300k test rows 0.809172 vs 0.809166 (+0.00001), LogLoss 0.438907 vs 0.438908. Left at 211 us: dense
+  ~55-60% (bound 125 us), string lookups ~26 profiled us, the rest is ScalarLens coordinate/normalization ops (einsum, slices, mul/add);
+  diminishing returns without restructuring ScalarLens. fp32 is unchanged because it is memory bound.

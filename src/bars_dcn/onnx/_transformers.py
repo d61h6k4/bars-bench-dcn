@@ -103,14 +103,19 @@ def _filler_outputs(step: MissingFiller) -> dict[str, DType]:
 
 
 def _emit_filler(graph: Builder, frame: Frame, step: MissingFiller) -> Frame:
-    """Replace NaN (the serving form of a missing value) by ``fill_value``."""
+    """Replace NaN (the serving form of a missing value) by ``fill_value``.
+
+    One ``IsNaN/Where`` over the columns concatenated into a block, then ``Split`` back into the
+    ``(batch, 1)`` columns of the frame (a later ``Concat`` of them cancels the ``Split``, see
+    ``simplify``).
+    """
+    columns = list(step.columns_)
     fill = graph.constant(step.fill_value, np.float64)
-    out: Frame = {}
-    for column in step.columns_:
-        value = _need(frame, column, "double", "MissingFiller")
-        filled = graph.op("Where", [graph.op("IsNaN", [value]), fill, value])
-        out[column] = Column(filled, "double")
-    return out
+    values = [_need(frame, column, "double", "MissingFiller") for column in columns]
+    block = graph.op("Concat", values, axis=1)
+    filled = graph.op("Where", [graph.op("IsNaN", [block]), fill, block])
+    parts = graph.ops("Split", [filled], len(columns), axis=1, num_outputs=len(columns))
+    return {column: Column(part, "double") for column, part in zip(columns, parts, strict=True)}
 
 
 def _ple_outputs(step: PiecewiseLinearEncoder) -> dict[str, DType]:
