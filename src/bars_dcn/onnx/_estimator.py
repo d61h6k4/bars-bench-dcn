@@ -12,6 +12,9 @@ import torch
 from onnx import helper
 from skl2onnx.common.data_types import DoubleTensorType, FloatTensorType, Int64TensorType
 from torch.export import Dim
+from torch.nn.utils.fusion import fuse_linear_bn_eval
+
+from bars_dcn.model.mlp import MLPBlock
 
 if TYPE_CHECKING:
     from bars_dcn.estimator import DCNClassifier
@@ -19,11 +22,27 @@ if TYPE_CHECKING:
 ONNX_OPSET = 20  # StringConcat (the fused string lookup) needs 20
 
 
+def fold_batch_norm(module: torch.nn.Module) -> torch.nn.Module:
+    """Fold each ``Linear -> BatchNorm1d`` of the MLP blocks into one ``Linear`` (eval, exact)."""
+    for block in module.modules():
+        if not isinstance(block, MLPBlock):
+            continue
+        layers = list(block.layers)
+        folded: list[torch.nn.Module] = []
+        for layer in layers:
+            if isinstance(layer, torch.nn.BatchNorm1d) and isinstance(folded[-1], torch.nn.Linear):
+                folded[-1] = fuse_linear_bn_eval(folded[-1], layer)
+            else:
+                folded.append(layer)
+        block.layers = torch.nn.Sequential(*folded)
+    return module
+
+
 def export_logit_graph(
     module: torch.nn.Module, n_fields: int, n_numeric: int = 0
 ) -> onnx.ModelProto:
     """Export ``x_cat (n, n_fields) int64 [, x_num (n, n_numeric) float32] -> logit (n,)``."""
-    module = copy.deepcopy(module).cpu().eval()
+    module = fold_batch_norm(copy.deepcopy(module).cpu().eval())
     batch = Dim("batch", min=1)
     example = [torch.zeros(2, n_fields, dtype=torch.int64)]
     names = ["x_cat"]

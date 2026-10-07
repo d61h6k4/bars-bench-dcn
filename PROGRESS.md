@@ -551,3 +551,14 @@ preprocessing set and training are built. Each milestone ends with its verificat
 - 2026-10-07: M10 side check, newer opset. ScalarLens alone, batch 1, 1 thread, M2: replacing the manual RMS norm by `F.rms_norm` and exporting at opset 23
   (RMSNormalization) gives 77 -> 74 nodes and 37.3 -> 37.1 us: no gain (ORT already fuses this pattern, and kernels do not depend on the opset). Opset stays 20
   (the minimum for StringConcat); reverted.
+- 2026-10-07: M10 stage 1, MLP speed sweep (`scripts/speed_sweep.py`: untrained variants, real vocabularies, int8 dense layers; latency only, accuracy is stage 2).
+  Also in this step: BatchNorm folded into the preceding Linear at export (`fold_batch_norm`, exact; no measurable speed change because ORT already fused it). p50, 1 thread, batch 1:
+  M2 Max int8 / fp32 us: base [1000]x5 198 / 495; mlp1000x2 139 / 260; mlp512x3 128 / 198; mlp256x3 117 / 168; dim8 (embedding_dim 8) 186 / 395;
+  dim8_mlp512x3 113 / 143; mix (low-rank mixture cross, rank 32, 4 experts) 372 / 601; mlp512x3_mix 294 / 330; dim8_mlp512x3_mix 212 / 235.
+  Hetzner ccx23 (a new VM, ~35% slower than the first one: the same v2 graph measured 289 us now vs 210 us before, so only same-session numbers compare), int8 + int8 table:
+  base 270; mlp1000x2 203; mlp512x3 194; mlp256x3 184; dim8 251; dim8_mlp512x3 183; mix 462; fp32 base 694-739. Same host, same session: the step 7 fused lookup graph (v3) is 270 vs 289 us
+  for v2 (-19 us, -6.5%), so the fused lookup helps on x86 as expected. Findings: (1) the low-rank *mixture* cross is SLOWER than full-rank (372 vs 198 us on M2, 462 vs 270 on x86)
+  despite 20% fewer weights: its experts, gating and tanh are many tiny ops; a plain single low-rank cross (two matmuls) would be needed to gain; (2) narrowing the MLP gives -25..-32% on x86
+  and flattens out: mlp512x3 194 vs mlp256x3 184 vs dim8_mlp512x3 183 us, the floor (lookups, ScalarLens, glue, client binding) is ~170-180 us on that host (~100 us on the M2);
+  (3) embedding_dim 8 alone is a small gain (-7%) but combined with a 512x3 MLP reaches the floor; (4) in stage 2, candidates to train: mlp1000x2, mlp512x3, mlp256x3, dim8_mlp512x3
+  (plus the known base 0.815478 as reference); the mixture variants are dropped. dim8_mlp256x3_mix had no layer large enough to quantize and was not timed.
