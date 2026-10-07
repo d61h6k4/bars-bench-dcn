@@ -97,7 +97,9 @@ def test_benchmark_reports_latency_ops_and_bound(exported, monkeypatch):
     path, requests = exported
     monkeypatch.setattr(
         "bars_dcn.bench.latency.machine_peaks",
-        lambda threads: machine_peaks(threads, bandwidth_mb=32, gemm_size=128, runs=3),
+        lambda threads, bandwidth_mb: machine_peaks(
+            threads, bandwidth_mb=min(bandwidth_mb, 32), gemm_size=128, runs=3
+        ),
     )
     (result,) = benchmark(path, requests, threads=[1], batch=2, runs=20, warmup=5)
     assert 0 < result["latency_us"]["p50"] <= result["latency_us"]["p99"]

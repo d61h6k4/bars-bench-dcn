@@ -518,3 +518,17 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (160 -> 145 us) is the only visible one. It should matter on x86 if the 15-18 MB int8 table fits a shared L3 where 58 MB does
   not, and for reload time / RAM per model. To be re-measured on Hetzner; the realistic access pattern is skewed (hot rows) while the
   bench replays 20k distinct test rows.
+- 2026-10-07: M10 step 5, x86 (Hetzner `ccx23`, fsn1, ~0.167 EUR/h, created and deleted the same day: AMD EPYC-Milan (Zen 3), 4 vCPU = 2 cores x
+  2 SMT threads, AVX2 only (no AVX-512 / VNNI), L2 1 MiB per core, L3 32 MiB, KVM; Python 3.12, onnxruntime 1.30; the bench is
+  run as `python latency.py` there because `bars_dcn.bench/__init__` imports torch). Same models as the M2 runs (step 3/4), batch 1,
+  preloaded, p50 (p99):
+  fp32 497 us (613) 1 thread, 332 us 2 threads, 343 us 4; int8 dense 210 us (232) 1 thread, 193 us 2, 271 us 4; int8 + emb int8 215 / 197 / 270;
+  int8 + emb fp16 209 / 191 / 270. A second fp32 run measured 628 us (1 thread), so this VM has ~25% run-to-run noise; int8 repeated at 210-220.
+  AUC on 300k test rows on x86 (ORT AVX2 u8s8 kernels): fp32 0.809166, int8 0.809160 (-0.000006), int8 + emb int8 0.809163. Findings:
+  (1) int8 is 2.3-2.9x faster at 1 thread even without VNNI, and the accuracy cost is nil; (2) threads: 4 vCPUs (2 cores) are slower than 2, 2 barely
+  beats 1 for int8: serve with 1 thread per request (and scale by replicas); (3) embedding quantization gives no latency gain on x86 either
+  (the table does not dominate: 26 gathered rows), only the file size; (4) the first roofline used a DRAM-sized buffer, so the fp32 "bound" (639 us)
+  exceeded the measured time, as the 23 MB of weights live in the 32 MB L3; the probe now streams a buffer the size of the model's dense weights
+  (22 MB: 47 GB/s on 1 thread, 6 MB: 62 GB/s). With it, int8 dense is ~108 us of the 220 us (49%), fp32 dense 78% of p50. The other half of int8 is
+  glue: on x86 the 26 `LabelEncoder` string lookups are ~12% of the profile (more than on the M2), then Mul/Add/Einsum (ScalarLens), Concat, Reshape.
+  Next levers: ScalarLens restructuring (fewer small ops) and cheaper categorical lookups (precomputed hash / one fused lookup).

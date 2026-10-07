@@ -143,8 +143,10 @@ def machine_peaks(
 ) -> dict[str, float]:
     """Streaming bandwidth (B/s) and float32 GEMM peak (FLOP/s) through onnxruntime.
 
-    Bandwidth: a ``(1, K) x (K, N)`` product whose weight (``bandwidth_mb`` MB, beyond any cache)
-    is read once per call, exactly the batch-1 access pattern. Peak: a cache-resident square GEMM.
+    Bandwidth: a ``(1, K) x (K, N)`` product whose weight (``bandwidth_mb`` MB) is read once per
+    call, exactly the batch-1 access pattern. Size it like the model's dense weights: they stay in
+    whichever cache level holds them, so a DRAM-sized buffer would understate the bandwidth.
+    Peak: a cache-resident square GEMM.
     """
     columns = 4096
     inner = bandwidth_mb * 2**20 // (4 * columns)
@@ -155,7 +157,7 @@ def machine_peaks(
     gemm = make_session(_matmul_graph(gemm_size, gemm_size, gemm_size, repeats), threads)
     seconds = _best_seconds(gemm, {"x": np.ones((gemm_size, gemm_size), np.float32)}, runs)
     peak = repeats * 2 * gemm_size**3 / seconds
-    return {"bandwidth": bandwidth, "gemm_flops": peak}
+    return {"bandwidth": bandwidth, "bandwidth_mb": bandwidth_mb, "gemm_flops": peak}
 
 
 def roofline_us(traffic: dict[str, float], peaks: dict[str, float], batch: int) -> dict[str, float]:
@@ -202,7 +204,7 @@ def benchmark(
         feeds = make_feeds(session, requests, batch, warmup + runs)
         latency = measure(session, feeds, warmup)
         ops = profile_ops(model_bytes, n, feeds[: max(runs // 4, 1)])
-        peaks = machine_peaks(n)
+        peaks = machine_peaks(n, bandwidth_mb=max(1, round(traffic["weight_bytes"] / 2**20)))
         bound = roofline_us(traffic, peaks, batch)
         results.append(
             {
@@ -229,8 +231,8 @@ def format_report(results: list[dict]) -> str:
                 f"p90 {lat['p90']:.0f}, p99 {lat['p99']:.0f}"
             ),
             (
-                f"  machine: {peaks['bandwidth'] / 1e9:.1f} GB/s stream, "
-                f"{peaks['gemm_flops'] / 1e9:.0f} GFLOP/s GEMM"
+                f"  machine: {peaks['bandwidth'] / 1e9:.1f} GB/s streaming a "
+                f"{peaks['bandwidth_mb']} MB buffer, {peaks['gemm_flops'] / 1e9:.0f} GFLOP/s GEMM"
             ),
             (
                 f"  dense layers: {r['dense']['weight_bytes'] / 1e6:.1f} MB weights, "
