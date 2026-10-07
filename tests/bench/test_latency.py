@@ -9,6 +9,7 @@ from sklearn.pipeline import Pipeline
 from bars_dcn.bench.latency import (
     benchmark,
     dense_traffic,
+    evaluate,
     format_report,
     machine_peaks,
     make_feeds,
@@ -17,6 +18,7 @@ from bars_dcn.bench.latency import (
 )
 from bars_dcn.estimator import DCNClassifier
 from bars_dcn.onnx import to_onnx
+from bars_dcn.onnx.quantize import quantize_dense
 from bars_dcn.preprocessing import MissingFiller, OrdinalEncoder
 
 SAMPLE = Path(__file__).parents[1] / "data" / "criteo_x4_sample"
@@ -102,3 +104,31 @@ def test_benchmark_reports_latency_ops_and_bound(exported, monkeypatch):
     assert any(op in result["ops_us"] for op in ("Gemm", "FusedGemm", "MatMul"))
     assert result["roofline_us"]["bound"] > 0
     assert "threads=1 batch=2" in format_report([result])
+
+
+def test_int8_model_is_smaller_and_close_to_fp32(exported, tmp_path):
+    path, requests = exported
+    quantized = tmp_path / "int8.onnx"
+    names = quantize_dense(path, quantized, min_weights=500)
+    assert names
+    fp32, int8 = path.read_bytes(), quantized.read_bytes()
+    assert len(int8) < len(fp32)
+    assert (
+        dense_traffic(onnx.load(quantized))["weight_bytes"]
+        < 0.7 * dense_traffic(onnx.load(path))["weight_bytes"]
+    )
+    outputs = []
+    for model in (fp32, int8):
+        session = make_session(model, threads=1)
+        (feed,) = make_feeds(session, requests, batch=len(requests), count=1)
+        outputs.append(np.asarray(session.run(None, feed)[1])[:, 1])
+    np.testing.assert_allclose(outputs[1], outputs[0], atol=0.05)
+
+
+def test_evaluate_scores_a_partial_last_batch(exported):
+    path, _ = exported
+    valid = pl.read_parquet(SAMPLE / "valid.parquet").head(100)
+    scores = evaluate(path.read_bytes(), valid, batch=64)
+    assert scores["rows"] == 100
+    assert 0.3 < scores["auc"] < 1
+    assert scores["logloss"] > 0

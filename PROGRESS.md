@@ -492,3 +492,11 @@ preprocessing set and training are built. Each milestone ends with its verificat
   low-rank cross), not FLOPs. String lookups (26 `LabelEncoder`s) are ~4% of the profiled time, so lookup tricks are not worth
   it at this size; glue ops (Concat/Where/Mul/Cast/...) ~20% and dominate at 4 threads (per-node overhead). The ORT profiler
   inflates small nodes (kernel sum 665 us vs 529 us wall). Earlier BARS-bucket number in ARCHITECTURE.md: 0.19 ms/row.
+- 2026-10-07: M10 step 2, int8 dense layers (`bars_dcn/onnx/quantize.py`: each Gemm with >= 100k weights becomes
+  DynamicQuantizeLinear + MatMulInteger with per-channel int8 weights, i.e. 8 layers: 5 MLP, 3 cross; ORT's own
+  `quantize_dynamic` silently did nothing for the torch-exported named Gemm nodes, hence the explicit rewrite). Same 1-epoch
+  ScalarLens model, M2 Max, batch 1, preloaded, 1 thread: p50 534 -> 230 us (2.3x), p99 609 -> 262; dense weights 23.4 -> 6.0 MB,
+  ONNX 94 -> 77 MB (the 80 MB embedding table is now most of the file). 4 threads: 253 -> 171 us. Accuracy on the first 300k
+  test rows (paired, ORT): AUC 0.809481 -> 0.809454 (-0.00003), LogLoss 0.438657 -> 0.438684 (+0.00003): negligible (the absolute
+  AUC is low because this model trained 1 epoch). The bound shown for int8 uses the fp32 GEMM peak, so its compute side is
+  pessimistic. Remaining at 230 us: dense ~55%, the rest is glue ops / lookups / ScalarLens.

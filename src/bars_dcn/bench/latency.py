@@ -20,8 +20,9 @@ import onnx
 import onnxruntime as ort
 import polars as pl
 from onnx import TensorProto, helper, numpy_helper
+from sklearn.metrics import log_loss, roc_auc_score
 
-_DENSE_OPS = ("Gemm", "MatMul")
+_DENSE_OPS = ("Gemm", "MatMul", "MatMulInteger")
 _FEED_DTYPES = {"tensor(string)": object, "tensor(double)": np.float64, "tensor(float)": np.float32}
 
 
@@ -95,7 +96,7 @@ def profile_ops(
 
 
 def dense_traffic(model: onnx.ModelProto) -> dict[str, float]:
-    """Weight bytes read and FLOPs per row by the Gemm / MatMul nodes with a constant 2-D weight."""
+    """Weight bytes read and FLOPs per row by the dense nodes with a constant 2-D weight."""
     weights = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}
     total_bytes = flops = 0.0
     for node in model.graph.node:
@@ -162,6 +163,25 @@ def roofline_us(traffic: dict[str, float], peaks: dict[str, float], batch: int) 
     memory = traffic["weight_bytes"] / peaks["bandwidth"] * 1e6
     compute = traffic["flops_per_row"] * batch / peaks["gemm_flops"] * 1e6
     return {"memory": memory, "compute": compute, "bound": max(memory, compute)}
+
+
+def evaluate(
+    model: str | bytes, requests: pl.DataFrame, label: str = "Label", batch: int = 1024
+) -> dict[str, float]:
+    """Test AUC and LogLoss of the exported model on ``requests`` (which carries ``label``)."""
+    session = make_session(model, threads=4)
+    probabilities = []
+    for start in range(0, len(requests), batch):
+        chunk = requests.slice(start, batch)
+        (feed,) = make_feeds(session, chunk, batch=len(chunk), count=1)
+        probabilities.append(np.asarray(session.run(None, feed)[1])[:, 1])
+    positive = np.concatenate(probabilities).astype(np.float64)
+    target = requests[label].to_numpy()
+    return {
+        "rows": len(requests),
+        "auc": float(roc_auc_score(target, positive)),
+        "logloss": float(log_loss(target, positive, labels=[0, 1])),
+    }
 
 
 def benchmark(
@@ -236,6 +256,10 @@ def main() -> None:
     parser.add_argument("--threads", type=int, nargs="+", default=[1])
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--runs", type=int, default=1000)
+    parser.add_argument(
+        "--eval", type=Path, default=None, help="parquet with raw columns and Label: report AUC"
+    )
+    parser.add_argument("--eval-rows", type=int, default=200_000)
     parser.add_argument("--out", type=Path, default=None, help="also write the results as JSON")
     args = parser.parse_args()
     results = benchmark(
@@ -246,6 +270,13 @@ def main() -> None:
         runs=args.runs,
     )
     print(format_report(results))  # noqa: T201
+    if args.eval:
+        scores = evaluate(args.model.read_bytes(), pl.read_parquet(args.eval).head(args.eval_rows))
+        print(  # noqa: T201
+            f"eval on {scores['rows']} rows: "
+            f"AUC {scores['auc']:.6f}, LogLoss {scores['logloss']:.6f}"
+        )
+        results[0]["eval"] = scores
     if args.out:
         args.out.write_text(json.dumps(results, indent=2))
 
