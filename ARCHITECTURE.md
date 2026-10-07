@@ -111,8 +111,9 @@ sklearn `Pipeline`, and every `bars_dcn` component registers a parser and a conv
   skl2onnx (`hour1`); this cannot happen in a full pipeline, whose outputs are `label` and
   `probabilities`.
 - Latency (BARS-size network, whole criteo pipeline, onnxruntime CPU on the M2 Max): 0.19 ms for
-  one row, 0.63 ms for 16, 6.4 ms for 256; the graph has 175 nodes.
-- Opset 18 for the main domain, `ai.onnx.ml` 3.
+  one row, 0.63 ms for 16, 6.4 ms for 256; the graph has 175 nodes. The serving-latency work (int8,
+  fused lookup, roofline bench) is in PROGRESS.md (M10) and README.md.
+- Opset 20 for the main domain (the fused string lookup needs `StringConcat`; skl2onnx 1.20 stops at 22, so newer opsets are not available), `ai.onnx.ml` 3.
 
 ## sklearn component contract
 

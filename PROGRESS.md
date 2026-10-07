@@ -93,7 +93,7 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `DCNv2` as an alternative numeric embedding fed with raw numerics + train ranges, (3) ONNX parity,
   (4) one run on the ablation seed 2022 with the BARS recipe vs the log-squared bucket baseline.
   "Beat the leaderboard" scope stays open.
-- [ ] **M10 Serving latency (roofline):** user goal: the fastest end-to-end ONNX model (raw columns ->
+- [~] **M10 Serving latency (roofline), stopped after stage 1 by the user (2026-10-07):** user goal: the fastest end-to-end ONNX model (raw columns ->
   probability, preloaded session, latency not throughput, x86 target = Hetzner `ccx` dedicated cores via
   the `hcloud` CLI, context `viral-products`), trading accuracy for speed but always measuring both. Best model to
   bench: ScalarLens (`scalarlens_q_l2`). Plan: (1) harness `bars_dcn/bench/latency.py` + `scripts/export_onnx.py`
@@ -562,3 +562,6 @@ preprocessing set and training are built. Each milestone ends with its verificat
   and flattens out: mlp512x3 194 vs mlp256x3 184 vs dim8_mlp512x3 183 us, the floor (lookups, ScalarLens, glue, client binding) is ~170-180 us on that host (~100 us on the M2);
   (3) embedding_dim 8 alone is a small gain (-7%) but combined with a 512x3 MLP reaches the floor; (4) in stage 2, candidates to train: mlp1000x2, mlp512x3, mlp256x3, dim8_mlp512x3
   (plus the known base 0.815478 as reference); the mixture variants are dropped. dim8_mlp256x3_mix had no layer large enough to quantize and was not timed.
+- 2026-10-07: Stopped here by the user: cleanup and README. Deleted `runs/latency` (2.1 GB, regenerable with `scripts/export_onnx.py` / `scripts/speed_sweep.py`), no cloud resources left
+  (RunPod pods: none, Hetzner servers: none). M10 stage 2 (train mlp1000x2 / mlp512x3 / mlp256x3 / dim8_mlp512x3, fixed epoch-4 LR drop or plateau rule, AUC vs latency) is not started;
+  open questions for it: the AUC budget, the LR schedule, whether to add a LayerNorm-in-MLP variant (cannot be folded away, so it can only cost latency).
