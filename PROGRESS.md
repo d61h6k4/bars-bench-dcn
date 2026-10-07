@@ -532,3 +532,10 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (22 MB: 47 GB/s on 1 thread, 6 MB: 62 GB/s). With it, int8 dense is ~108 us of the 220 us (49%), fp32 dense 78% of p50. The other half of int8 is
   glue: on x86 the 26 `LabelEncoder` string lookups are ~12% of the profile (more than on the M2), then Mul/Add/Einsum (ScalarLens), Concat, Reshape.
   Next levers: ScalarLens restructuring (fewer small ops) and cheaper categorical lookups (precomputed hash / one fused lookup).
+- 2026-10-07: M10 step 6, ScalarLens graph. `coordinate` now picks the interval's boundaries and knot vectors with indexed lookups (flattened
+  tables + per-field offsets) instead of one-hot `Equal/Cast/Mul/ReduceSum` and two einsums. Same math: output equals the previous module within
+  2e-8 on a seeded input; `state_dict` unchanged (the offsets are a non-persistent buffer); training step on MPS (batch 10k, module alone) 21.0 -> 18.7 ms.
+  ScalarLens alone in ORT (13 numerics, 26 categorical tokens, batch 1, 1 thread, M2 Max): 81 -> 77 nodes, p50 43 -> 37 us, i.e. ~6 us of the ~200 us
+  request (3%, inside the end-to-end noise, so the full model was not re-exported). Tried and dropped: a paired (start,end)/(lower,upper) lookup (2 gathers
+  instead of 4) measured 40 us, not better. What is left is the 3-step recurrence (about 10 small nodes per step) and the head/readout einsums: ~35 us, ScalarLens
+  is ~17% of the request, so restructuring it further can give at most ~10 us; not pursued.

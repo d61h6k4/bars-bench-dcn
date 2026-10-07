@@ -27,6 +27,7 @@ class ScalarLens(nn.Module):
 
     low: Tensor
     high: Tensor
+    slot_offsets: Tensor
 
     def __init__(
         self,
@@ -55,6 +56,10 @@ class ScalarLens(nn.Module):
         self.token_dropout = token_dropout
         self.register_buffer("low", torch.zeros(n_numeric))
         self.register_buffer("high", torch.ones(n_numeric))
+        # row of field n, interval 0 in the flattened (N * (K + 1)) boundary and knot tables
+        self.register_buffer(
+            "slot_offsets", torch.arange(n_numeric) * (intervals + 1), persistent=False
+        )
         self.width_logits = nn.Parameter(torch.zeros(n_numeric, intervals))
         self.knots = nn.Parameter(torch.randn(n_numeric, intervals + 1, dim) * _EMBEDDING_STD)
         # field-specific drive / gate heads: ebar_f (d) -> (delta_f, g_f) (m each)
@@ -116,16 +121,12 @@ class ScalarLens(nn.Module):
         bounds = self.boundaries()
         x = torch.minimum(torch.maximum(x_num, self.low), self.high)
         # interval index = number of inner boundaries <= x, in [0, K - 1]
-        index = (x.unsqueeze(-1) >= bounds[:, 1:-1]).sum(-1)
-        slots = torch.arange(self.intervals + 1, device=x.device)
-        lower = (index.unsqueeze(-1) == slots).to(x.dtype)  # (B, N, K + 1) one-hot of k
-        upper = (index.unsqueeze(-1) + 1 == slots).to(x.dtype)  # one-hot of k + 1
-        start, end = (lower * bounds).sum(-1), (upper * bounds).sum(-1)
+        index = (x.unsqueeze(-1) >= bounds[:, 1:-1]).sum(-1) + self.slot_offsets
+        flat_bounds, flat_knots = bounds.reshape(-1), self.knots.reshape(-1, self.dim)
+        start, end = flat_bounds[index], flat_bounds[index + 1]
         # float32 can collapse neighbouring boundaries (|low| >> span): then x == start, weight 0
         weight = ((x - start) / (end - start).clamp_min(_MIN_GAP)).unsqueeze(-1)
-        return torch.einsum("bnk,nkd->bnd", lower, self.knots) * (
-            1 - weight
-        ) + weight * torch.einsum("bnk,nkd->bnd", upper, self.knots)
+        return flat_knots[index] * (1 - weight) + weight * flat_knots[index + 1]
 
     def forward(self, x_num: Tensor, cat_embeddings: Tensor) -> Tensor:
         coordinate = self.coordinate(x_num)
