@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 LABEL_ENCODER_VERSION = 2
+STRING_CONCAT_VERSION = 20  # the first opset with StringConcat
 # Sakamoto's day-of-week table: (y + y/4 - y/100 + y/400 + T[m-1] + d) % 7 with Sunday = 0
 _WEEKDAY_TABLE = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
 
@@ -79,23 +80,57 @@ def _ordinal_outputs(step: OrdinalEncoder) -> dict[str, DType]:
 
 
 def _emit_ordinal(graph: Builder, frame: Frame, step: OrdinalEncoder) -> Frame:
-    """One ``LabelEncoder`` per column; every value outside the vocabulary maps to OOV 0."""
-    string = step.kind_ == "string"
-    key_type: DType = "string" if string else "int64"
-    key_attribute = "keys_strings" if string else "keys_int64s"
+    """Every value outside the vocabulary maps to OOV 0.
+
+    Integer columns get one ``LabelEncoder`` each. String columns share a single one: the columns
+    are concatenated into a ``(batch, n)`` block, each value is prefixed with ``"<column
+    number>:"`` and one ``LabelEncoder`` over the prefixed vocabularies returns the block of
+    indices, ``Split`` back into the frame's columns (a later ``Concat`` of them cancels the
+    ``Split``, see ``simplify``). One node instead of ``n`` is what makes lookups cheap.
+    """
+    if step.kind_ == "string":
+        return _emit_string_ordinal(graph, frame, step)
     out: Frame = {}
     for column, categories in zip(step.columns_, step.categories_, strict=True):
         index = graph.op(
             "LabelEncoder",
-            [_need(frame, column, key_type, "OrdinalEncoder")],
+            [_need(frame, column, "int64", "OrdinalEncoder")],
             domain=ML_DOMAIN,
             version=LABEL_ENCODER_VERSION,
-            **{key_attribute: list(categories)},
+            keys_int64s=list(categories),
             values_int64s=list(range(1, len(categories) + 1)),
             default_int64=OOV_INDEX,
         )
         out[column] = Column(index, "int64")
     return out
+
+
+def _emit_string_ordinal(graph: Builder, frame: Frame, step: OrdinalEncoder) -> Frame:
+    columns = list(step.columns_)
+    block = graph.op(
+        "Concat", [_need(frame, c, "string", "OrdinalEncoder") for c in columns], axis=1
+    )
+    prefixes = [f"{j}:" for j in range(len(columns))]
+    prefixed = graph.op(
+        "StringConcat", [graph.string_constant(prefixes), block], version=STRING_CONCAT_VERSION
+    )
+    keys = [
+        f"{prefix}{category}"
+        for prefix, vocabulary in zip(prefixes, step.categories_, strict=True)
+        for category in vocabulary
+    ]
+    values = [i for vocabulary in step.categories_ for i in range(1, len(vocabulary) + 1)]
+    indices = graph.op(
+        "LabelEncoder",
+        [prefixed],
+        domain=ML_DOMAIN,
+        version=LABEL_ENCODER_VERSION,
+        keys_strings=keys,
+        values_int64s=values,
+        default_int64=OOV_INDEX,
+    )
+    parts = graph.ops("Split", [indices], len(columns), axis=1, num_outputs=len(columns))
+    return {column: Column(part, "int64") for column, part in zip(columns, parts, strict=True)}
 
 
 def _filler_outputs(step: MissingFiller) -> dict[str, DType]:

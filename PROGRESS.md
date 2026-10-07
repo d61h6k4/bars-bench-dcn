@@ -539,3 +539,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   request (3%, inside the end-to-end noise, so the full model was not re-exported). Tried and dropped: a paired (start,end)/(lower,upper) lookup (2 gathers
   instead of 4) measured 40 us, not better. What is left is the 3-step recurrence (about 10 small nodes per step) and the head/readout einsums: ~35 us, ScalarLens
   is ~17% of the request, so restructuring it further can give at most ~10 us; not pursued.
+- 2026-10-07: M10 step 7, one lookup for all string columns. `OrdinalEncoder` on strings is emitted as Concat of the columns -> `StringConcat` with a
+  "<column number>:" prefix -> a single `LabelEncoder` over the prefixed vocabularies (909k keys) -> Split back into columns (cancelled against
+  the estimator's Concat by `simplify`); semantics unchanged (null / "" / unseen -> OOV 0, covered by the e2e edge-row tests). Integer
+  columns keep one `LabelEncoder` each. ONNX opset 18 -> 20 (StringConcat). Where the time was, M2 Max 1 thread, 26 string inputs: the lookups-only graph ran
+  31 us, of which 16.5 us is ORT's binding of 26 numpy string arrays (an identity graph on the same inputs, a client cost that no graph change removes); the
+  26 lookups were ~15 us and the fused one ~3 us (19.6 us total). End to end (re-exported 1-epoch ScalarLens, batch 1, 1 thread, also including the
+  step 6 ScalarLens change): fp32 487 us, int8 201 us (v2: 211 us, -10 us / -5%), graph 145 -> 117 nodes (fp32); AUC on 300k test rows int8 0.809062 vs fp32 0.809068
+  (a fresh 1-epoch run again: absolute AUC varies between runs, the int8-fp32 gap does not). The x86 gain of this step is not yet measured (the LabelEncoder
+  share is larger there, ~12% of the profile).

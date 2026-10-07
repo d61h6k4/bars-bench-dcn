@@ -16,7 +16,7 @@ from torch.export import Dim
 if TYPE_CHECKING:
     from bars_dcn.estimator import DCNClassifier
 
-ONNX_OPSET = 18
+ONNX_OPSET = 20  # StringConcat (the fused string lookup) needs 20
 
 
 def export_logit_graph(

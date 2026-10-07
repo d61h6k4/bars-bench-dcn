@@ -3,7 +3,7 @@
 from typing import Literal
 
 import numpy as np
-from onnx import helper
+from onnx import TensorProto, helper
 from skl2onnx.common.data_types import (
     DoubleTensorType,
     FloatTensorType,
@@ -42,6 +42,14 @@ class Builder:
         name = self.scope.get_unique_variable_name("const")
         self.container.add_initializer(
             name, helper.np_dtype_to_tensor_dtype(array.dtype), array.shape, array
+        )
+        return name
+
+    def string_constant(self, values: list[str]) -> str:
+        """Add a ``(1, len(values))`` string initializer; return its name."""
+        name = self.scope.get_unique_variable_name("const")
+        self.container.add_initializer(
+            name, TensorProto.STRING, [1, len(values)], [v.encode() for v in values]
         )
         return name
 

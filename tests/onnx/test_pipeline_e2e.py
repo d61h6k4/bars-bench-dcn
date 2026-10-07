@@ -114,6 +114,13 @@ def test_onnx_matches_pipeline_on_real_and_edge_rows(fitted, session, requests):
     np.testing.assert_array_equal(label, fitted.predict(requests))
 
 
+def test_all_string_columns_share_one_lookup_and_no_split_survives(fitted):
+    ops = [node.op_type for node in to_onnx(fitted, dict.fromkeys(CATS, "string")).graph.node]
+    assert ops.count("LabelEncoder") == 1
+    assert ops.count("StringConcat") == 1
+    assert "Split" not in ops  # the Split after the lookup cancels against the estimator's Concat
+
+
 def test_outputs_are_plain_tensors_not_zipmap(fitted):
     proto = to_onnx(fitted, dict.fromkeys(CATS, "string"))
     assert [output.name for output in proto.graph.output] == ["label", "probabilities"]
