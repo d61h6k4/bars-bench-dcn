@@ -93,6 +93,13 @@ preprocessing set and training are built. Each milestone ends with its verificat
   `DCNv2` as an alternative numeric embedding fed with raw numerics + train ranges, (3) ONNX parity,
   (4) one run on the ablation seed 2022 with the BARS recipe vs the log-squared bucket baseline.
   "Beat the leaderboard" scope stays open.
+- [ ] **M10 Serving latency (roofline):** user goal: the fastest end-to-end ONNX model (raw columns ->
+  probability, preloaded session, latency not throughput, x86 target = Hetzner `ccx` dedicated cores via
+  the `hcloud` CLI, context `viral-products`), trading accuracy for speed but always measuring both. Best model to
+  bench: ScalarLens (`scalarlens_q_l2`). Plan: (1) harness `bars_dcn/bench/latency.py` + `scripts/export_onnx.py`
+  [done, local M2 Max], (2) variants: fp16/int8 dense weights, narrower MLP, low-rank cross, ScalarLens
+  rank/intervals, embedding quantization, graph fusion of the glue ops; each with latency and AUC (AUC needs a
+  training run per variant), (3) repeat on Hetzner x86 (L3 size may change the memory-bound picture).
 
 ## Next actions
 
@@ -476,3 +483,12 @@ preprocessing set and training are built. Each milestone ends with its verificat
   (best of the session, +0.00096 AUC over BARS), scalarlens_q_drop 0.814662 / 0.437674. Caveats: one seed, a-priori L2/dropout
   values, LR-drop timing noise ~0.001, not a leaderboard claim. Untested: ScalarLens+L2 with the epoch-4 fixed LR drop and with
   PLE bins, other seeds. Pod zg2efby39dz5ra deleted 2026-10-07 ~00:08 UTC; cost since 15:12 UTC on 10-06 about 9 h x $0.74/h = ~$6.7.
+- 2026-10-07: M10 step 1, latency harness (`uv run python -m bars_dcn.bench.latency model.onnx requests.parquet --threads 1 4`;
+  model from `scripts/export_onnx.py`, 1-epoch ScalarLens on full criteo so vocabularies are real-size: 20.4M params, 94 MB
+  ONNX, 237 nodes). M2 Max, onnxruntime 1.30 CPU, batch 1, preloaded session, p50 / p99: 1 thread 529 / 607 us, 4 threads
+  253 / 306 us. Measured through ORT: 49 GB/s streaming (1 thread), 113 GB/s (4), 109 / 412 GFLOP/s GEMM. The dense layers
+  (23.4 MB weights, 11.7 MFLOP/row, five 1000-wide MLP layers + 3 cross layers) are memory bound at batch 1: bound 475 us
+  (1 thread) = 90% of p50, 206 us (4 threads) = 81%. So at batch 1 the lever is bytes read (fp16/int8, narrower MLP,
+  low-rank cross), not FLOPs. String lookups (26 `LabelEncoder`s) are ~4% of the profiled time, so lookup tricks are not worth
+  it at this size; glue ops (Concat/Where/Mul/Cast/...) ~20% and dominate at 4 threads (per-node overhead). The ORT profiler
+  inflates small nodes (kernel sum 665 us vs 529 us wall). Earlier BARS-bucket number in ARCHITECTURE.md: 0.19 ms/row.

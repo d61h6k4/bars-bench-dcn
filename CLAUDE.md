@@ -56,6 +56,8 @@ uv run ty check               # type check (Astral's ty; keep it clean)
 uv run python scripts/make_sample.py [--dataset avazu_x4]   # regenerate an e2e sample (needs data/<Dataset>/)
 uv run pytest -m full_data    # opt-in: BARS preprocessing parity on the full train split (needs data/Criteo_x4/, ~20 s)
 uv run python -m bars_dcn.bench configs/criteo_x4_dcnv2.toml --seeds 2019   # full run on MPS -> runs/
+uv run python scripts/export_onnx.py configs/criteo_x4_dcnv2.toml runs/latency/x --set ...  # fit 1 epoch + export model.onnx
+uv run python -m bars_dcn.bench.latency runs/latency/x/model.onnx runs/latency/x/requests.parquet --threads 1 4   # serving latency vs roofline
 uv run tensorboard --logdir runs   # epoch metrics + signal-propagation plots
 ```
 
