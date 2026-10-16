@@ -50,7 +50,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     ``scalarlens`` embeds the numeric block with a ScalarLens (raw numerics in, one token per
     field; training ranges are recorded at ``fit``). ``scalarlens_init`` is ``"uniform"`` (equal
     interval widths over the range, the paper's) or ``"quantile"`` (boundaries start at the training
-    quantiles).
+    quantiles). ``scalarlens_coordinate`` is ``"linear"`` or ``"bspline"`` (cubic).
 
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
@@ -83,6 +83,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         scalarlens: bool = False,
         scalarlens_init: str = "uniform",
         scalarlens_dropout: float = 0.0,
+        scalarlens_coordinate: str = "linear",
         scalarlens_regularizer: float = 0.0,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
@@ -115,6 +116,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.scalarlens = scalarlens
         self.scalarlens_init = scalarlens_init
         self.scalarlens_dropout = scalarlens_dropout
+        self.scalarlens_coordinate = scalarlens_coordinate
         self.scalarlens_regularizer = scalarlens_regularizer
         self.structure = structure
         self.num_cross_layers = num_cross_layers
@@ -274,6 +276,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             shared_embedding=self.shared_embedding,
             scalarlens=self.scalarlens,
             scalarlens_dropout=self.scalarlens_dropout,
+            scalarlens_coordinate=self.scalarlens_coordinate,
             structure=self.structure,
             num_cross_layers=self.num_cross_layers,
             use_low_rank_mixture=self.use_low_rank_mixture,

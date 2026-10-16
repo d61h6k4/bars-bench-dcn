@@ -4,6 +4,9 @@ A numeric field gets a *stable coordinate* from its scalar alone (a piecewise-li
 between learned vectors over K learned monotone intervals of the training range) and a *contextual
 response* (a few bounded low-rank updates over all field tokens). Only numeric tokens are returned;
 the categorical embeddings are read, never rewritten.
+
+``coordinate="bspline"`` swaps the piecewise-linear interpolation for a uniform cubic B-spline over
+the same learned intervals (``K + 3`` control vectors): a C2-smooth curve of the scalar.
 """
 
 import torch
@@ -18,6 +21,7 @@ class ScalarLens(nn.Module):
 
     The output is one ``d``-dimensional numeric token per numeric field, ``(batch, N, d)``.
 
+    ``coordinate`` is ``"linear"`` (the paper's, ``K + 1`` knot vectors) or ``"bspline"``.
     ``set_ranges`` must be called with the training ``[low, high]`` of every field before use;
     inputs outside the range are clipped to it. Defaults are the paper's frozen ones
     (``K=16, T=3, r=16, m=8``, head width 32); ``temperature`` and ``norm_eps`` are not specified
@@ -28,6 +32,7 @@ class ScalarLens(nn.Module):
     low: Tensor
     high: Tensor
     slot_offsets: Tensor
+    knot_offsets: Tensor
 
     def __init__(
         self,
@@ -36,6 +41,7 @@ class ScalarLens(nn.Module):
         dim: int = 16,
         *,
         intervals: int = 16,
+        coordinate: str = "linear",
         steps: int = 3,
         rank: int = 16,
         state: int = 8,
@@ -49,19 +55,25 @@ class ScalarLens(nn.Module):
         if intervals < 1:
             msg = f"intervals must be at least 1, got {intervals}"
             raise ValueError(msg)
+        if coordinate not in ("linear", "bspline"):
+            msg = f"coordinate must be 'linear' or 'bspline', got {coordinate!r}"
+            raise ValueError(msg)
         fields = n_numeric + n_categorical
         self.n_numeric, self.dim, self.intervals = n_numeric, dim, intervals
+        self.coordinate_kind = coordinate
+        n_knots = intervals + (3 if coordinate == "bspline" else 1)
         self.steps, self.state = steps, state
         self.min_width, self.temperature, self.norm_eps = min_width, temperature, norm_eps
         self.token_dropout = token_dropout
         self.register_buffer("low", torch.zeros(n_numeric))
         self.register_buffer("high", torch.ones(n_numeric))
-        # row of field n, interval 0 in the flattened (N * (K + 1)) boundary and knot tables
+        # row of field n, interval 0 in the flattened boundary (K + 1 per field) and knot tables
         self.register_buffer(
             "slot_offsets", torch.arange(n_numeric) * (intervals + 1), persistent=False
         )
+        self.register_buffer("knot_offsets", torch.arange(n_numeric) * n_knots, persistent=False)
         self.width_logits = nn.Parameter(torch.zeros(n_numeric, intervals))
-        self.knots = nn.Parameter(torch.randn(n_numeric, intervals + 1, dim) * _EMBEDDING_STD)
+        self.knots = nn.Parameter(torch.randn(n_numeric, n_knots, dim) * _EMBEDDING_STD)
         # field-specific drive / gate heads: ebar_f (d) -> (delta_f, g_f) (m each)
         self.head_weight = nn.Parameter(torch.empty(fields, dim, 2 * state))
         self.head_bias = nn.Parameter(torch.zeros(fields, 2 * state))
@@ -126,7 +138,24 @@ class ScalarLens(nn.Module):
         start, end = flat_bounds[index], flat_bounds[index + 1]
         # float32 can collapse neighbouring boundaries (|low| >> span): then x == start, weight 0
         weight = ((x - start) / (end - start).clamp_min(_MIN_GAP)).unsqueeze(-1)
-        return flat_knots[index] * (1 - weight) + weight * flat_knots[index + 1]
+        knot = index - self.slot_offsets + self.knot_offsets
+        if self.coordinate_kind == "linear":
+            return flat_knots[knot] * (1 - weight) + weight * flat_knots[knot + 1]
+        # uniform cubic B-spline: segment i blends control vectors i .. i + 3
+        t = weight
+        t2, t3 = t * t, t * t * t
+        basis = (
+            (1 - t) ** 3 / 6,
+            (3 * t3 - 6 * t2 + 4) / 6,
+            (-3 * t3 + 3 * t2 + 3 * t + 1) / 6,
+            t3 / 6,
+        )
+        return (
+            basis[0] * flat_knots[knot]
+            + basis[1] * flat_knots[knot + 1]
+            + basis[2] * flat_knots[knot + 2]
+            + basis[3] * flat_knots[knot + 3]
+        )
 
     def forward(self, x_num: Tensor, cat_embeddings: Tensor) -> Tensor:
         coordinate = self.coordinate(x_num)

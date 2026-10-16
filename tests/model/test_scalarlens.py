@@ -76,8 +76,9 @@ def test_gradients_reach_the_boundaries_knots_and_the_shared_operator():
         assert grad.abs().sum() > 0, name
 
 
-def test_onnx_export_matches_torch_for_any_batch_size():
-    module = _module().eval()
+@pytest.mark.parametrize("coordinate", ["linear", "bspline"])
+def test_onnx_export_matches_torch_for_any_batch_size(coordinate):
+    module = _module(coordinate=coordinate).eval()
     program = torch.onnx.export(
         module,
         (torch.zeros(2, N), torch.zeros(2, C, D)),
@@ -159,3 +160,37 @@ def test_the_l2_penalty_covers_scalarlens_parameters_but_not_the_boundary_logits
     assert lens.width_logits.grad is None
     plain = DCNv2([4, 4], embedding_dim=4, parallel_hidden_units=[8])
     assert scalarlens_penalty(plain, 0.1) == 0
+
+
+def test_bspline_coordinate_is_a_partition_of_unity_and_smooth():
+    module = _module(coordinate="bspline")
+    assert module.knots.shape == (N, 5 + 3, D)
+    with torch.no_grad():
+        module.knots.copy_(torch.ones_like(module.knots))  # constant control vectors
+    x = torch.linspace(0, 100, 201).unsqueeze(-1).expand(-1, N)
+    torch.testing.assert_close(module.coordinate(x), torch.ones(201, N, D))
+    with torch.no_grad():
+        module.knots.normal_(0, 1)
+    values = module.coordinate(x)[:, 0, 0]
+    assert (values.diff().diff().abs() < 1.0).all()  # no kinks: bounded second differences
+
+
+def test_bspline_coordinate_matches_scipy_and_gets_gradients():
+    scipy_interpolate = pytest.importorskip("scipy.interpolate")
+    module = _module(coordinate="bspline")
+    bounds, knots = module.boundaries()[0].detach(), module.knots[0].detach()
+    x = torch.tensor([[37.0, 0.0, 5.0]])
+    index = int((x[0, 0] >= bounds[1:-1]).sum())
+    t = float((x[0, 0] - bounds[index]) / (bounds[index + 1] - bounds[index]))
+    spline = scipy_interpolate.BSpline(np.arange(-3, 5 + 4, dtype=float), knots.numpy(), 3)
+    np.testing.assert_allclose(
+        module.coordinate(x)[0, 0].detach().numpy(), spline(index + t), atol=1e-5
+    )
+    module.coordinate(x).sum().backward()
+    assert module.knots.grad is not None
+    assert module.knots.grad.abs().sum() > 0
+
+
+def test_unknown_coordinate_is_rejected():
+    with pytest.raises(ValueError, match="coordinate"):
+        ScalarLens(N, C, D, coordinate="nope")
