@@ -51,6 +51,8 @@ class TrainSettings:
     num_workers: int = 0  # DataLoader worker processes gathering batches ahead of the step
     prefetch_factor: int = 2  # batches each worker keeps ready (only with num_workers > 0)
     scalarlens_regularizer: float = 0.0  # L2 on the ScalarLens parameters (not its boundary logits)
+    weight_decay: float = 0.0  # decoupled decay lambda on the MLP / cross / head weight matrices
+    adamc: bool = False  # AdamC: decay of BatchNorm-followed layers is lr^2 / lr_max * lambda
     lr_drop_epochs: tuple[int, ...] | None = None  # fixed schedule: scale the LR after these epochs
     log_every_steps: int = 500  # progress line (loss, steps/s) every this many steps; 0 disables
     log_dir: str | None = None
@@ -127,6 +129,40 @@ def scalarlens_penalty(model: DCNv2, regularizer: float) -> torch.Tensor:
     return 0.5 * regularizer * torch.stack(squares).sum()
 
 
+def decay_groups(model: DCNv2) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    """Weight matrices that get decoupled weight decay, as ``(normalized, other)``.
+
+    ``normalized`` are MLP linears directly followed by BatchNorm (scale invariant: the layers
+    AdamC corrects). ``other`` are the cross-network weights and the head. Biases, BatchNorm
+    parameters, the embedding table (it has its own L2) and ScalarLens (same) are left out.
+    """
+    normalized: list[torch.Tensor] = []
+    other: list[torch.Tensor] = [
+        p for name, p in model.cross.named_parameters() if "bias" not in name
+    ]
+    other.append(model.fc.weight)
+    for block in (model.stacked, model.parallel):
+        if block is None:
+            continue
+        layers = list(block.layers)
+        for layer, following in zip(layers, [*layers[1:], None], strict=True):
+            if isinstance(layer, torch.nn.Linear):
+                batch_normed = isinstance(following, torch.nn.BatchNorm1d)
+                (normalized if batch_normed else other).append(layer.weight)
+    return normalized, other
+
+
+def decay_factors(settings: TrainSettings, lr: float) -> tuple[float, float]:
+    """Per-step shrink ``(normalized, other)``: ``w <- w * (1 - factor)`` before the Adam update.
+
+    AdamW decays everything by ``lr * lambda``. AdamC (Defazio 2025, arXiv 2506.02285) decays the
+    normalized group by ``lr^2 / lr_max * lambda`` instead, with ``lr_max`` the initial LR.
+    """
+    other = lr * settings.weight_decay
+    normalized = other * lr / settings.learning_rate if settings.adamc else other
+    return normalized, other
+
+
 def make_accelerator(device: str) -> Accelerator:
     """Return a fresh ``Accelerator``; ``"auto"`` lets accelerate pick, ``"mps"`` demands MPS."""
     if device not in ("auto", "cpu", "mps"):
@@ -165,10 +201,16 @@ def _run_epoch(
     accelerator: Accelerator,
     loader: DataLoader,
     settings: TrainSettings,
-) -> float:
-    """One pass over the (already shuffled and device-placed) batches; returns the mean loss."""
+    groups: tuple[list[torch.Tensor], list[torch.Tensor]],
+) -> dict[str, float]:
+    """One pass over the (already shuffled and device-placed) batches.
+
+    Returns the mean loss and the mean / max gradient norm before clipping.
+    """
     model.train()
     total, steps = torch.zeros((), device=accelerator.device), 0
+    grad_total = torch.zeros((), device=accelerator.device)
+    grad_max = torch.zeros((), device=accelerator.device)
     started = time.perf_counter()
     for index, numeric, labels in loader:
         optimizer.zero_grad(set_to_none=True)
@@ -179,8 +221,16 @@ def _run_epoch(
         if settings.scalarlens_regularizer:
             loss = loss + scalarlens_penalty(model, settings.scalarlens_regularizer)
         accelerator.backward(loss)
-        accelerator.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
+        grad_norm = accelerator.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
+        if settings.weight_decay:
+            lr = optimizer.param_groups[0]["lr"]
+            for params, factor in zip(groups, decay_factors(settings, lr), strict=True):
+                with torch.no_grad():
+                    for weight in params:
+                        weight.mul_(1.0 - factor)
         optimizer.step()
+        grad_total += grad_norm.detach()
+        grad_max = torch.maximum(grad_max, grad_norm.detach())
         total += loss.detach()
         steps += 1
         if settings.log_every_steps and steps % settings.log_every_steps == 0:
@@ -189,7 +239,19 @@ def _run_epoch(
                 "step %d/%d: mean loss %.4f, %.1f steps/s",
                 steps, len(loader), float(total) / steps, steps / elapsed,
             )  # fmt: skip
-    return float(total) / max(steps, 1)
+    return {
+        "train_loss": float(total) / max(steps, 1),
+        "grad_norm": float(grad_total) / max(steps, 1),
+        "grad_norm_max": float(grad_max),
+    }
+
+
+def _weight_norm(params: list[torch.Tensor]) -> float:
+    """Global L2 norm of the given weights (0 if there are none)."""
+    if not params:
+        return 0.0
+    with torch.no_grad():
+        return float(torch.stack([p.pow(2).sum() for p in params]).sum().sqrt())
 
 
 def _validate(model: DCNv2, valid: Block) -> tuple[float, float]:
@@ -280,6 +342,7 @@ def fit_network(
         pin_memory=accelerator.device.type == "cuda",
     )
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
+    groups = decay_groups(accelerator.unwrap_model(model))
     stopper = PlateauStopper(
         settings.patience, settings.lr_reduce_factor, settings.min_lr, settings.min_delta
     )
@@ -293,8 +356,9 @@ def fit_network(
     best_state, best_epoch = None, None
     lr = settings.learning_rate
     for epoch in range(1, settings.max_epochs + 1):
-        loss = _run_epoch(model, optimizer, accelerator, loader, settings)
-        record = {"epoch": float(epoch), "lr": lr, "train_loss": loss}
+        stats = _run_epoch(model, optimizer, accelerator, loader, settings, groups)
+        record = {"epoch": float(epoch), "lr": lr, **stats}
+        record["mlp_weight_norm"] = _weight_norm(groups[0])
         stop, decision = False, None
         if valid is not None:
             record["val_auc"], record["val_logloss"] = _validate(model, valid)

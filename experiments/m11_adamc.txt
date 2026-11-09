@@ -1,0 +1,10 @@
+# M11: AdamC (Defazio 2025, arXiv 2506.02285) vs AdamW vs no decay on the dense layers, criteo_x4 BARS recipe, seed 2022,
+# fixed LR drop after epoch 4 (reference `lrdrop4`: valid 0.814606, test 0.814925, LL 0.437186). AdamW: decay lr*lambda; AdamC: lr^2/lr_max*lambda on
+# BatchNorm-followed MLP layers (cross and head keep lr*lambda). Embedding L2 unchanged. history has grad_norm, grad_norm_max, mlp_weight_norm.
+configs/criteo_x4_dcnv2.toml --name lrdrop4_ref --seeds 2022 --set model.lr_drop_epochs=[4]
+configs/criteo_x4_dcnv2.toml --name adamw_0.01 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.01
+configs/criteo_x4_dcnv2.toml --name adamc_0.01 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.01 --set model.adamc=true
+configs/criteo_x4_dcnv2.toml --name adamw_0.05 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.05
+configs/criteo_x4_dcnv2.toml --name adamc_0.05 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.05 --set model.adamc=true
+configs/criteo_x4_dcnv2.toml --name adamw_0.2 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.2
+configs/criteo_x4_dcnv2.toml --name adamc_0.2 --seeds 2022 --set model.lr_drop_epochs=[4] --set model.weight_decay=0.2 --set model.adamc=true

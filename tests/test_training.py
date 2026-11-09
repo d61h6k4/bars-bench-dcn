@@ -136,7 +136,10 @@ class TestFitWithValidation:
     def test_history_has_one_record_per_epoch_with_the_expected_fields(self, trained):
         history = trained["model"].history_
         assert [h["epoch"] for h in history] == list(range(1, len(history) + 1))
-        assert set(history[0]) == {"epoch", "lr", "train_loss", "val_auc", "val_logloss"}
+        assert set(history[0]) == {
+            "epoch", "lr", "train_loss", "val_auc", "val_logloss",
+            "grad_norm", "grad_norm_max", "mlp_weight_norm",
+        }  # fmt: skip
         assert history[0]["lr"] == pytest.approx(1e-3)
 
     def test_schedule_and_stopping_follow_the_stopper(self, trained):
@@ -337,3 +340,51 @@ class TestFixedLearningRateSchedule:
             device="cpu", lr_drop_epochs=[1], random_state=0,
         ).fit(x, y)  # fmt: skip
         np.testing.assert_allclose([h["lr"] for h in model.history_], [1e-3, 1e-4, 1e-4])
+
+
+class TestWeightDecay:
+    def test_factors_follow_adamw_and_adamc(self):
+        from bars_dcn.training import TrainSettings, decay_factors  # noqa: PLC0415
+
+        adamw = TrainSettings(weight_decay=0.05)
+        assert decay_factors(adamw, 1e-3) == pytest.approx((5e-5, 5e-5))
+        adamc = TrainSettings(weight_decay=0.05, adamc=True)
+        assert decay_factors(adamc, 1e-3) == pytest.approx((5e-5, 5e-5))  # at lr_max they agree
+        assert decay_factors(adamc, 1e-4) == pytest.approx((5e-7, 5e-6))  # lr^2 / lr_max vs lr
+
+    def test_groups_split_batch_normed_mlp_layers_from_cross_and_head(self):
+        from bars_dcn.training import decay_groups  # noqa: PLC0415
+
+        model = DCNv2([3, 4], embedding_dim=2, parallel_hidden_units=[8, 8], batch_norm=True)
+        normalized, other = decay_groups(model)
+        assert model.parallel is not None
+        linears = [m.weight for m in model.parallel.layers if isinstance(m, torch.nn.Linear)]
+        assert [id(p) for p in normalized] == [id(p) for p in linears]
+        assert id(model.fc.weight) in {id(p) for p in other}
+        assert all(p.ndim >= 2 for p in normalized + other)  # no biases
+        assert id(model.embedding.weight) not in {id(p) for p in normalized + other}
+        unnormalized, _ = decay_groups(
+            DCNv2([3, 4], embedding_dim=2, parallel_hidden_units=[8, 8], batch_norm=False)
+        )
+        assert unnormalized == []
+
+    def _fit(self, **kwargs):
+        x, y = _toy(200)
+        return DCNClassifier(
+            embedding_dim=2, parallel_hidden_units=[16], batch_size=64, max_epochs=3,
+            device="cpu", random_state=0, **kwargs,
+        ).fit(x, y)  # fmt: skip
+
+    def test_zero_decay_changes_nothing_and_decay_shrinks_the_weights(self):
+        plain, decayed = self._fit(), self._fit(weight_decay=50.0)
+        assert plain.history_[-1]["grad_norm"] > 0
+        assert decayed.history_[-1]["mlp_weight_norm"] < plain.history_[-1]["mlp_weight_norm"]
+        assert self._fit().history_ == plain.history_
+
+    def test_adamc_decays_less_than_adamw_once_the_lr_has_dropped(self):
+        kwargs = {"weight_decay": 50.0, "lr_drop_epochs": [1]}
+        adamw, adamc = self._fit(**kwargs), self._fit(adamc=True, **kwargs)
+        assert adamc.history_[0]["mlp_weight_norm"] == pytest.approx(
+            adamw.history_[0]["mlp_weight_norm"]
+        )  # same epoch 1: lr == lr_max
+        assert adamc.history_[-1]["mlp_weight_norm"] > adamw.history_[-1]["mlp_weight_norm"]

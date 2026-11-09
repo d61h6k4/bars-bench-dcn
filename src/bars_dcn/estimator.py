@@ -69,6 +69,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     step); the row order does not depend on them. ``lr_drop_epochs`` replaces the plateau-triggered
     LR schedule by a fixed one (the LR is scaled by ``lr_reduce_factor`` after those epochs; early
     stopping still tracks the validation AUC).
+    ``weight_decay`` (lambda) adds decoupled decay ``lr * lambda`` to the MLP, cross and head
+    weight matrices; with ``adamc`` the MLP layers followed by BatchNorm decay by
+    ``lr**2 / lr_max * lambda`` instead (AdamC, arXiv 2506.02285).
     ``log_dir`` writes TensorBoard epoch metrics and
     signal-propagation plots there.
     """
@@ -103,6 +106,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         lr_reduce_factor: float = 0.1,
         min_lr: float = 1e-6,
         lr_drop_epochs: Sequence[int] | None = None,
+        weight_decay: float = 0.0,
+        adamc: bool = False,
         device: str = "auto",
         num_workers: int = 0,
         prefetch_factor: int = 2,
@@ -136,6 +141,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.lr_reduce_factor = lr_reduce_factor
         self.min_lr = min_lr
         self.lr_drop_epochs = lr_drop_epochs
+        self.weight_decay = weight_decay
+        self.adamc = adamc
         self.device = device
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
@@ -300,6 +307,8 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
             lr_reduce_factor=self.lr_reduce_factor,
             min_lr=self.min_lr,
             lr_drop_epochs=None if self.lr_drop_epochs is None else tuple(self.lr_drop_epochs),
+            weight_decay=self.weight_decay,
+            adamc=self.adamc,
             device=self.device,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
