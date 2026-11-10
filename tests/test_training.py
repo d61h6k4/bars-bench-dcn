@@ -388,3 +388,36 @@ class TestWeightDecay:
             adamw.history_[0]["mlp_weight_norm"]
         )  # same epoch 1: lr == lr_max
         assert adamc.history_[-1]["mlp_weight_norm"] > adamw.history_[-1]["mlp_weight_norm"]
+
+
+class TestScalarLensBoundaries:
+    def _fit(self, **kwargs):
+        from bars_dcn.preprocessing import MissingFiller  # noqa: PLC0415
+
+        train = pl.read_parquet(SAMPLE / "train.parquet").head(1500)
+        pipeline = Pipeline(
+            [
+                ("fill", MissingFiller(columns=NUMS, fill_value=0)),
+                ("encode", OrdinalEncoder(columns=CATS, min_count=3)),
+                (
+                    "model",
+                    DCNClassifier(
+                        cat_columns=CATS, num_columns=NUMS, scalarlens=True,
+                        scalarlens_init="quantile", embedding_dim=4, num_cross_layers=2,
+                        parallel_hidden_units=[16], max_epochs=2, batch_size=256,
+                        device="cpu", random_state=0, **kwargs,
+                    ),
+                ),
+            ]
+        )  # fmt: skip
+        return pipeline.fit(train, train["Label"].to_numpy())["model"]
+
+    def test_boundaries_move_during_training_and_are_logged(self):
+        history = self._fit().history_
+        assert history[0]["boundary_shift"] > 0
+        assert history[-1]["boundary_shift_max"] >= history[-1]["boundary_shift"]
+
+    def test_frozen_boundaries_stay_at_their_initial_values(self):
+        model = self._fit(scalarlens_freeze_boundaries=True)
+        assert [h["boundary_shift"] for h in model.history_] == [0.0, 0.0]
+        assert not model.model_.numeric_embedding.width_logits.requires_grad

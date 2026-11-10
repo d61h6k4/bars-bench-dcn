@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from torch.utils.tensorboard import SummaryWriter
 
     from bars_dcn.model import DCNv2
+    from bars_dcn.model.scalarlens import ScalarLens
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +316,14 @@ def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
         group["lr"] = lr
 
 
+def _boundary_shift(lens: ScalarLens | None, initial: torch.Tensor | None) -> dict[str, float]:
+    """Mean and max |change| of the interval-width logits since init (0.1 ~ a 10% width change)."""
+    if lens is None or initial is None:
+        return {}
+    shift = (lens.width_logits.detach() - initial).abs()
+    return {"boundary_shift": float(shift.mean()), "boundary_shift_max": float(shift.max())}
+
+
 def fit_network(
     model: DCNv2,
     train: Block,
@@ -343,6 +352,8 @@ def fit_network(
     )
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
     groups = decay_groups(accelerator.unwrap_model(model))
+    lens = accelerator.unwrap_model(model).numeric_embedding
+    initial_logits = None if lens is None else lens.width_logits.detach().clone()
     stopper = PlateauStopper(
         settings.patience, settings.lr_reduce_factor, settings.min_lr, settings.min_delta
     )
@@ -359,6 +370,7 @@ def fit_network(
         stats = _run_epoch(model, optimizer, accelerator, loader, settings, groups)
         record = {"epoch": float(epoch), "lr": lr, **stats}
         record["mlp_weight_norm"] = _weight_norm(groups[0])
+        record.update(_boundary_shift(lens, initial_logits))
         stop, decision = False, None
         if valid is not None:
             record["val_auc"], record["val_logloss"] = _validate(model, valid)

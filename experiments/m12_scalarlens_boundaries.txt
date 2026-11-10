@@ -1,0 +1,7 @@
+# M12: do the ScalarLens boundaries adapt? criteo_x4, seed 2022, plateau LR rule, `scalarlens_q_l2` recipe
+# (reference: valid 0.815155, test 0.815478, LL 0.436839, best epoch 9 of 11).
+# history now has boundary_shift / boundary_shift_max: mean / max |change| of the interval-width logits since init (0.1 ~ 10% width change).
+# Re-run of the reference with the new logging (should reproduce the numbers up to GPU nondeterminism)
+configs/criteo_x4_dcnv2.toml --name scalarlens_q_l2_log --seeds 2022 --set 'preprocessing.numeric="scalarlens"' --set 'preprocessing.scalarlens_init="quantile"' --set model.scalarlens_regularizer=1e-4
+# same, boundaries frozen at the training quantiles
+configs/criteo_x4_dcnv2.toml --name scalarlens_q_l2_frozen --seeds 2022 --set 'preprocessing.numeric="scalarlens"' --set 'preprocessing.scalarlens_init="quantile"' --set model.scalarlens_regularizer=1e-4 --set model.scalarlens_freeze_boundaries=true

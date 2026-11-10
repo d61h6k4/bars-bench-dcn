@@ -51,6 +51,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
     field; training ranges are recorded at ``fit``). ``scalarlens_init`` is ``"uniform"`` (equal
     interval widths over the range, the paper's) or ``"quantile"`` (boundaries start at the training
     quantiles). ``scalarlens_coordinate`` is ``"linear"`` or ``"bspline"`` (cubic).
+    ``scalarlens_freeze_boundaries`` keeps the interval boundaries at their initial values.
 
     ``num_columns`` adds a block of float columns (e.g. the output of a piecewise-linear encoder)
     that is concatenated to the embeddings; it needs a polars frame and explicit ``cat_columns``.
@@ -88,6 +89,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         scalarlens_dropout: float = 0.0,
         scalarlens_coordinate: str = "linear",
         scalarlens_regularizer: float = 0.0,
+        scalarlens_freeze_boundaries: bool = False,
         structure: Structure = "parallel",
         num_cross_layers: int = 3,
         use_low_rank_mixture: bool = False,
@@ -123,6 +125,7 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         self.scalarlens_dropout = scalarlens_dropout
         self.scalarlens_coordinate = scalarlens_coordinate
         self.scalarlens_regularizer = scalarlens_regularizer
+        self.scalarlens_freeze_boundaries = scalarlens_freeze_boundaries
         self.structure = structure
         self.num_cross_layers = num_cross_layers
         self.use_low_rank_mixture = use_low_rank_mixture
@@ -296,6 +299,9 @@ class DCNClassifier(ClassifierMixin, BaseEstimator):
         )
         if model.numeric_embedding is not None:
             self._init_scalarlens(model.numeric_embedding, numeric)
+            model.numeric_embedding.width_logits.requires_grad_(
+                not self.scalarlens_freeze_boundaries
+            )
         settings = TrainSettings(
             learning_rate=self.learning_rate,
             batch_size=self.batch_size,
