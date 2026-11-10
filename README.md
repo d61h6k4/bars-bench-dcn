@@ -51,6 +51,11 @@ learning rate drops (the plateau rule's timing moves AUC by about 0.001). **Cave
 below the baseline are single-seed (2022), the L2 value was one a-priori choice and nothing was tuned,
 so this is not a leaderboard claim.
 
+Tried and dropped: decoupled weight decay on the dense layers, plain (AdamW) or corrected for the
+BatchNorm-normalized layers (AdamC, arXiv 2506.02285), at lambda 0.01 / 0.05 / 0.2 with the LR drop.
+AdamC differs from AdamW by at most 0.00001 test AUC and neither beats the no-decay row, so both stay as
+default-off options (`weight_decay`, `adamc`). Details: `experiments/m11_adamc_report.md`.
+
 ## Serving latency (ONNX Runtime CPU, batch 1, preloaded model)
 
 The whole ScalarLens pipeline (26 string lookups, numeric fill, ScalarLens, DCNv2), p50, one thread.
